@@ -24,7 +24,39 @@ app.get("/api/health", (_req, res) => {
 app.use("/api", chatRouter);
 app.use("/api/computer", computerRouter);
 
-// Start server
-app.listen(PORT, () => {
+// Start server with port error resilience and lifecycle logging
+const server = app.listen(PORT, () => {
   console.log(`🚀 Luma Backend is running on http://localhost:${PORT}`);
+});
+
+server.on("error", (err: NodeJS.ErrnoException) => {
+  if (err.code === "EADDRINUSE") {
+    console.error(`❌ [Port Conflict] Port ${PORT} is already in use by another process.`);
+    console.error(`   To free port ${PORT}, run: netstat -ano | findstr :${PORT}`);
+  } else {
+    console.error(`❌ [Server Error]:`, err);
+  }
+  process.exit(1);
+});
+
+// Graceful shutdown handling
+process.on("SIGINT", () => {
+  server.close(() => {
+    process.exit(0);
+  });
+});
+
+process.on("SIGTERM", () => {
+  server.close(() => {
+    process.exit(0);
+  });
+});
+
+// Global crash handlers to prevent silent backend exits
+process.on("uncaughtException", (err) => {
+  console.error("❌ [Backend Uncaught Exception]:", err);
+});
+
+process.on("unhandledRejection", (reason) => {
+  console.error("❌ [Backend Unhandled Rejection]:", reason);
 });
