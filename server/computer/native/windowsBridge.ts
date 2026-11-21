@@ -1,7 +1,21 @@
 import { exec } from "child_process";
 import { promisify } from "util";
+import path from "path";
+import { fileURLToPath } from "url";
 
 const execAsync = promisify(exec);
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const WINDOW_MANAGER_SCRIPT = path.resolve(__dirname, "scripts", "windowManager.ps1");
+
+export interface VisibleWindow {
+  hwnd: number;
+  title: string;
+  processId: number;
+  processName: string;
+  isForeground: boolean;
+  isMinimized: boolean;
+}
 
 /**
  * WindowsBridge handles low-level Windows OS interactions safely and reliably
@@ -275,6 +289,59 @@ $ms.Dispose()
   }
 
   /**
+   * Executes a standalone PowerShell script file safely.
+   */
+  static async runScriptFile<T = any>(scriptPath: string, args: string[] = []): Promise<T> {
+    const formattedArgs = args.map((a) => (a.includes(" ") ? `"${a}"` : a)).join(" ");
+    const command = `powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "${scriptPath}" ${formattedArgs}`;
+
+    const { stdout, stderr } = await execAsync(command, {
+      maxBuffer: 25 * 1024 * 1024,
+      windowsHide: true,
+    });
+
+    if (stderr && stderr.includes("ParserError")) {
+      throw new Error(`PowerShell Syntax Error in ${path.basename(scriptPath)}: ${stderr}`);
+    }
+
+    const raw = stdout.trim();
+    if (!raw) {
+      return [] as unknown as T;
+    }
+
+    try {
+      const jsonStart = raw.indexOf("{");
+      const arrayStart = raw.indexOf("[");
+      let startIdx = 0;
+
+      if (jsonStart !== -1 && (arrayStart === -1 || jsonStart < arrayStart)) {
+        startIdx = jsonStart;
+      } else if (arrayStart !== -1) {
+        startIdx = arrayStart;
+      }
+
+      const jsonStr = raw.substring(startIdx);
+      return JSON.parse(jsonStr) as T;
+    } catch {
+      throw new Error(`Failed to parse JSON response from script: ${raw.slice(0, 200)}...`);
+    }
+  }
+
+  /**
+   * Enumerate all visible application windows on the desktop using Win32 EnumDesktopWindows.
+   * Filters out cloaked windows, background services, and tooltips.
+   */
+  static async getVisibleWindows(): Promise<VisibleWindow[]> {
+    try {
+      const result = await this.runScriptFile<VisibleWindow[]>(WINDOW_MANAGER_SCRIPT, ["-Action", "list"]);
+      return Array.isArray(result) ? result : result ? [result] : [];
+    } catch (err: any) {
+      console.warn("[WindowsBridge] getVisibleWindows error, falling back:", err?.message);
+      return [];
+    }
+  }
+
+  /**
    * Gets details of the currently active / foreground window.
    */
   static async getActiveWindowInfo(): Promise<{
@@ -283,6 +350,21 @@ $ms.Dispose()
     processId: number;
     hwnd: number;
   }> {
+    try {
+      const active = await this.runScriptFile<{
+        title: string;
+        processName: string;
+        processId: number;
+        hwnd: number;
+      }>(WINDOW_MANAGER_SCRIPT, ["-Action", "active"]);
+
+      if (active && (active.title || active.processName)) {
+        return active;
+      }
+    } catch {
+      // Fallback to in-process WinActive script below
+    }
+
     const script = `
 $code = @"
 using System;
@@ -320,7 +402,7 @@ if ($pidOut -gt 0) {
 
 @{
     hwnd = $hwnd.ToInt64()
-    title = $sb.ToString()
+    title = $sb.ToString().Trim()
     processId = [int]$pidOut
     processName = $pName
 } | ConvertTo-Json -Compress
@@ -334,17 +416,52 @@ if ($pidOut -gt 0) {
   }
 
   /**
-   * Focus an application window by title or process name.
+   * Focus an application window by title, process name, or HWND.
+   * Restores minimized window, shows it, and brings it to top.
    */
-  static async focusWindow(titleOrProcess: string): Promise<boolean> {
-    const jsonTarget = JSON.stringify(titleOrProcess);
+  static async focusWindow(titleOrProcessOrHwnd: string): Promise<boolean> {
+    try {
+      const res = await this.runScriptFile<{ success: boolean }>(WINDOW_MANAGER_SCRIPT, [
+        "-Action",
+        "focus",
+        "-Target",
+        titleOrProcessOrHwnd,
+      ]);
+      if (res && res.success) return true;
+    } catch {
+      // Fallback to WScript.Shell
+    }
+
+    const jsonTarget = JSON.stringify(titleOrProcessOrHwnd);
     const script = `
 $wshell = New-Object -ComObject WScript.Shell
 $target = ${jsonTarget}
 $success = $wshell.AppActivate($target)
 @{ success = $success } | ConvertTo-Json -Compress
 `;
-    const res = await this.runPowerShellJson<{ success: boolean }>(script);
-    return Boolean(res.success);
+    try {
+      const res = await this.runPowerShellJson<{ success: boolean }>(script);
+      return Boolean(res.success);
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Safely closes an application window using Win32 WM_CLOSE message.
+   * Avoids killing entire process tree or ApplicationFrameHost.
+   */
+  static async closeWindow(titleOrProcessOrHwnd: string): Promise<{ success: boolean; error?: string }> {
+    try {
+      const res = await this.runScriptFile<{ success: boolean; error?: string }>(WINDOW_MANAGER_SCRIPT, [
+        "-Action",
+        "close",
+        "-Target",
+        titleOrProcessOrHwnd,
+      ]);
+      return res;
+    } catch (err: any) {
+      return { success: false, error: err?.message || "Failed to close window." };
+    }
   }
 }

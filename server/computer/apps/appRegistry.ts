@@ -2,6 +2,7 @@ import fs from "fs";
 import { exec } from "child_process";
 import { promisify } from "util";
 import type { AppDefinition } from "../types.js";
+import { AppDiscovery, type LaunchTarget } from "./appDiscovery.js";
 
 const execAsync = promisify(exec);
 
@@ -65,6 +66,35 @@ const DEFAULT_APPS: AppDefinition[] = [
       `${systemRoot}\\notepad.exe`,
     ],
     description: "Basic text editor included with Microsoft Windows.",
+  },
+  {
+    name: "paint",
+    displayName: "Paint",
+    category: "Graphics",
+    executableName: "mspaint.exe",
+    commandName: "mspaint",
+    protocolUri: "ms-paint:",
+    standardPaths: [
+      `${systemRoot}\\System32\\mspaint.exe`,
+      `${systemRoot}\\mspaint.exe`,
+    ],
+    description: "Windows Paint drawing application.",
+  },
+  {
+    name: "clock",
+    displayName: "Clock",
+    category: "Utilities",
+    executableName: "Time.exe",
+    protocolUri: "ms-clock:",
+    description: "Windows Clock, Alarms, and Timer application.",
+  },
+  {
+    name: "photos",
+    displayName: "Photos",
+    category: "Media",
+    executableName: "Photos.exe",
+    protocolUri: "ms-photos:",
+    description: "Windows Photos and image viewer application.",
   },
   {
     name: "calc",
@@ -209,6 +239,34 @@ export class AppRegistry {
   }
 
   /**
+   * Finds an application by name or alias, falling back to dynamic AppDiscovery.
+   */
+  static async findAppAsync(name: string): Promise<AppDefinition | undefined> {
+    const existing = this.getApp(name);
+    if (existing) return existing;
+
+    try {
+      const discovered = await AppDiscovery.findApp(name);
+      if (discovered) {
+        const dynamicApp: AppDefinition = {
+          name: discovered.name,
+          displayName: discovered.displayName,
+          category: discovered.category || "Application",
+          executableName: discovered.executableName || `${discovered.name}.exe`,
+          protocolUri: discovered.protocolUri,
+          description: `Discovered application: ${discovered.displayName}`,
+        };
+        this.registerApp(dynamicApp);
+        return dynamicApp;
+      }
+    } catch {
+      // ignore discovery errors
+    }
+
+    return undefined;
+  }
+
+  /**
    * Returns all registered applications.
    */
   static getAllApps(): AppDefinition[] {
@@ -217,13 +275,34 @@ export class AppRegistry {
 
   /**
    * Resolves the executable path or launch target for a given application.
-   * Checks standard paths first, then `where.exe`, and falls back to command / protocol.
+   * Checks dynamic AppDiscovery first, then standard paths, where.exe, protocol, and command.
    */
   static async resolveLaunchTarget(app: AppDefinition): Promise<{
-    type: "file" | "command" | "protocol";
+    type: "file" | "command" | "protocol" | "aumid";
     target: string;
+    processNames?: string[];
   }> {
-    // 1. Check known standard file paths
+    // 1. Check AppDiscovery for protocol or AUMID resolution
+    try {
+      const discovered = await AppDiscovery.findApp(app.name || app.displayName);
+      if (discovered) {
+        const resolved = await AppDiscovery.resolveLaunch(discovered);
+        return {
+          type: resolved.type,
+          target: resolved.target,
+          processNames: resolved.processNames,
+        };
+      }
+    } catch {
+      // Fallback to static resolution below
+    }
+
+    // 2. Fallback to protocol URI if defined (e.g. ms-paint:, ms-clock:, calculator:)
+    if (app.protocolUri) {
+      return { type: "protocol", target: app.protocolUri };
+    }
+
+    // 3. Check known standard file paths
     if (app.standardPaths) {
       for (const p of app.standardPaths) {
         try {
@@ -236,7 +315,7 @@ export class AppRegistry {
       }
     }
 
-    // 2. Check executable in system PATH using `where.exe`
+    // 4. Check executable in system PATH using `where.exe`
     const searchName = app.commandName || app.executableName;
     if (searchName) {
       try {
@@ -250,12 +329,7 @@ export class AppRegistry {
       }
     }
 
-    // 3. Fallback to protocol URI if defined (e.g. whatsapp:, calculator:)
-    if (app.protocolUri) {
-      return { type: "protocol", target: app.protocolUri };
-    }
-
-    // 4. Fallback to command name
+    // 5. Fallback to command name
     if (app.commandName) {
       return { type: "command", target: app.commandName };
     }

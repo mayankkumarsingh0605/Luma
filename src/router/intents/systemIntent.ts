@@ -41,12 +41,32 @@ export function matchSystemIntent(normalizedText: string, rawText: string): Inte
     };
   }
 
-  // 2. GET_ACTIVE_WINDOW: "what window is active?", "active window", "which window is open?", "kaunsi window khuli hai?"
+  // 1B. GET_VISIBLE_WINDOWS: "tell me which windows are currently active", "show all open windows", "what is running on my desktop"
   if (
-    /^(?:what\s+window\s+is\s+active|which\s+window\s+is\s+(?:active|open)|active\s+window|current\s+window|get\s+active\s+window)$/i.test(
-      text
+    /^(?:(?:can\s+you\s+)?(?:please\s+)?(?:tell\s+me\s+|show\s+me\s+)?)?(?:which\s+windows\s+are\s+(?:currently\s+)?(?:active|open)|show\s+(?:me\s+)?(?:all\s+)?open\s+windows|what\s+windows\s+are\s+(?:currently\s+)?open|what\s+is\s+(?:currently\s+)?running\s+on\s+(?:my\s+)?desktop|what\s+is\s+open\s+on\s+(?:my\s+)?desktop|list\s+(?:all\s+)?(?:open\s+|visible\s+)?windows|open\s+windows|visible\s+windows)$/i.test(
+      cleanCmd
     ) ||
-    /(?:kaunsi\s+window\s+khuli\s+hai|active\s+window\s+kaunsi\s+hai)/i.test(raw)
+    /(?:kaun\s+kaun\s+si\s+window\s+khuli\s+hai|saari\s+khuli\s+windows|desktop\s+pe\s+kya\s+kya\s+khula\s+hai|open\s+windows\s+dikhao)/i.test(
+      rawClean
+    )
+  ) {
+    return {
+      matched: true,
+      intent: "GET_VISIBLE_WINDOWS",
+      ruleName: "RULE_GET_VISIBLE_WINDOWS",
+      arguments: {},
+      toolToExecute: "get_visible_windows",
+    };
+  }
+
+  // 2. GET_ACTIVE_WINDOW: "what window is active?", "which application is currently active?", "active window", "kaunsi window khuli hai?"
+  if (
+    /^(?:(?:can\s+you\s+)?(?:please\s+)?(?:tell\s+me\s+|show\s+me\s+)?)?(?:what\s+window\s+is\s+active|which\s+(?:window|app|application)\s+is\s+(?:currently\s+)?active|which\s+window\s+is\s+(?:currently\s+)?(?:active|open)|active\s+window|current\s+window|get\s+active\s+window)$/i.test(
+      cleanCmd
+    ) ||
+    /(?:kaunsi\s+window\s+khuli\s+hai|active\s+window\s+kaunsi\s+hai|abhi\s+kaunsi\s+window\s+open\s+hai)/i.test(
+      rawClean
+    )
   ) {
     return {
       matched: true,

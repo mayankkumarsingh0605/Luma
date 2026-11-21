@@ -208,6 +208,74 @@ export class WorkflowEngine {
         }
       }
 
+      case "GET_VISIBLE_WINDOWS": {
+        context.onProgress("Enumerating open windows...", "in-progress");
+        try {
+          let data: any;
+          try {
+            const res = await fetch("/api/computer/execute", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ tool: "get_visible_windows", arguments: {} }),
+            });
+            data = await res.json();
+          } catch {
+            if (typeof window === "undefined") {
+              const modPath = "../../server/computer/tools/toolExecutor.js";
+              const mod = await (Function("m", "return import(m)")(modPath));
+              data = await mod.ToolExecutor.executeTool("get_visible_windows", {});
+            } else {
+              throw new Error("Backend server unreachable.");
+            }
+          }
+
+          if (data.success && Array.isArray(data.result)) {
+            const windows: any[] = data.result;
+            const fg = windows.find((w) => w.isForeground);
+            const others = windows.filter((w) => !w.isForeground);
+
+            const lines: string[] = [];
+            lines.push(`Total visible windows: ${windows.length}`);
+            lines.push("");
+
+            if (fg) {
+              const state = fg.isMinimized ? "Minimized" : "Visible";
+              lines.push(`ACTIVE / FOREGROUND WINDOW:`);
+              lines.push(`• "${fg.title}" [${fg.processName}] (PID: ${fg.processId}, HWND: ${fg.hwnd}, State: ${state})`);
+              lines.push("");
+            }
+
+            if (others.length > 0) {
+              lines.push(`OTHER OPEN WINDOWS:`);
+              for (const w of others) {
+                const state = w.isMinimized ? "Minimized" : "Visible";
+                lines.push(`• "${w.title}" [${w.processName}] (PID: ${w.processId}, HWND: ${w.hwnd}, State: ${state})`);
+              }
+            } else if (!fg) {
+              lines.push("No visible application windows currently open.");
+            }
+
+            const formattedMsg = lines.join("\n");
+            context.onProgress(`Found ${windows.length} open windows`, "completed");
+            return {
+              success: true,
+              message: formattedMsg,
+              data: {
+                count: windows.length,
+                activeWindow: fg || null,
+                windows,
+              },
+            };
+          }
+
+          context.onProgress("Failed to enumerate windows", "failed");
+          return { success: false, message: "Could not enumerate open windows.", error: data.error };
+        } catch (err: any) {
+          context.onProgress("System communication error", "failed");
+          return { success: false, message: "Could not enumerate open windows.", error: err?.message };
+        }
+      }
+
       case "GET_ACTIVE_WINDOW": {
         context.onProgress("Inspecting active window...", "in-progress");
         try {

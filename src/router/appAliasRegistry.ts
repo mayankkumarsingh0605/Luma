@@ -33,9 +33,24 @@ export const APP_ALIASES: AppAliasEntry[] = [
     aliases: ["notepad", "notes", "text editor"],
   },
   {
+    canonical: "paint",
+    displayName: "Paint",
+    aliases: ["mspaint", "paint", "ms paint", "drawing", "microsoft paint"],
+  },
+  {
+    canonical: "clock",
+    displayName: "Clock",
+    aliases: ["clock", "alarms", "alarm", "stopwatch", "timer", "windows clock"],
+  },
+  {
+    canonical: "photos",
+    displayName: "Photos",
+    aliases: ["photos", "photo viewer", "image viewer", "windows photos", "pictures"],
+  },
+  {
     canonical: "calc",
     displayName: "Calculator",
-    aliases: ["calculator", "calc"],
+    aliases: ["calculator", "calc", "windows calculator"],
   },
   {
     canonical: "explorer",

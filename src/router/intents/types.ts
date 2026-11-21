@@ -37,6 +37,7 @@ export type UserIntentType =
   | "TAKE_SCREENSHOT"
   | "CHECK_SYSTEM"
   | "GET_ACTIVE_WINDOW"
+  | "GET_VISIBLE_WINDOWS"
   | "INSPECT_COMPUTER"
   | "TYPE_TEXT"
   | "PRESS_KEY"

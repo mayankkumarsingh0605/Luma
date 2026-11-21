@@ -78,9 +78,11 @@ export async function executeAppControlWorkflow(
 
     // Action Verification
     if (action === "open") {
-      const running = await ActionVerifier.verifyAppRunning(appCanonical);
-      if (!running) {
-        await ActionVerifier.sleep(500);
+      if (!data.result?.verified) {
+        const running = await ActionVerifier.verifyAppRunning(appCanonical);
+        if (!running) {
+          await ActionVerifier.sleep(500);
+        }
       }
       context.onProgress(`${appDisplayName} opened successfully`, "completed");
       ComputerStateManager.update({

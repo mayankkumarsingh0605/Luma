@@ -102,6 +102,25 @@ computerRouter.get("/observe", async (req: Request, res: Response): Promise<void
 });
 
 /**
+ * GET /api/computer/windows
+ * Enumerates all open visible application windows, distinguishing foreground window.
+ */
+computerRouter.get("/windows", async (_req: Request, res: Response): Promise<void> => {
+  try {
+    const windows = await SystemController.getVisibleWindows();
+    const active = windows.find((w) => w.isForeground) || (await SystemController.getActiveWindow().catch(() => null));
+    res.json({
+      success: true,
+      count: windows.length,
+      activeWindow: active,
+      windows,
+    });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error?.message || "Failed to enumerate windows." });
+  }
+});
+
+/**
  * GET /api/computer/state
  * Get current snapshot of system state (OS info, active window, resolution, mouse position).
  */

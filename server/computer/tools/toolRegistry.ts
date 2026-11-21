@@ -330,6 +330,20 @@ export class ToolRegistry {
 
     this.register({
       definition: {
+        name: "get_visible_windows",
+        displayName: "Get Visible Windows",
+        description: "Enumerates all open visible application windows on the desktop, distinguishing foreground window from open windows.",
+        category: "system",
+        safetyLevel: "SAFE",
+        parameters: [],
+      },
+      handler: async () => {
+        return await SystemController.getVisibleWindows();
+      },
+    });
+
+    this.register({
+      definition: {
         name: "get_screen_size",
         displayName: "Get Screen Size",
         description: "Returns the resolution dimensions (width, height) of the primary display.",

@@ -1,7 +1,7 @@
 import os from "os";
 import { exec } from "child_process";
 import { promisify } from "util";
-import { WindowsBridge } from "../native/windowsBridge.js";
+import { WindowsBridge, type VisibleWindow } from "../native/windowsBridge.js";
 import type {
   SystemInfo,
   ScreenInfo,
@@ -50,6 +50,13 @@ export class SystemController {
    */
   static async getActiveWindow(): Promise<ActiveWindowInfo> {
     return await WindowsBridge.getActiveWindowInfo();
+  }
+
+  /**
+   * Enumerates all visible application windows on the desktop.
+   */
+  static async getVisibleWindows(): Promise<VisibleWindow[]> {
+    return await WindowsBridge.getVisibleWindows();
   }
 
   /**

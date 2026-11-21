@@ -23,12 +23,37 @@ export function basicNormalize(rawText: string): string {
 }
 
 /**
+ * Strips common conversational prefixes and polite wrappers while preserving core instructions.
+ * e.g. "Please open Paint" -> "open Paint"
+ * e.g. "Can you open Paint for me?" -> "open Paint"
+ * e.g. "Luma, tell me which windows are active" -> "tell me which windows are active"
+ */
+export function stripConversationalPrefixes(text: string): string {
+  let cleaned = text.trim();
+  // Strip trailing punctuation first
+  cleaned = cleaned.replace(/[.?!]+$/g, "").trim();
+  // Assistant name prefix
+  cleaned = cleaned.replace(/^(?:hey\s+)?luma\s*,?\s*/i, "");
+  // Polite prefixes
+  cleaned = cleaned.replace(/^(?:can\s+you\s+(?:please\s+)?|could\s+you\s+(?:please\s+)?|would\s+you\s+(?:please\s+)?)/i, "");
+  cleaned = cleaned.replace(/^(?:please|kindly|kripya)\s+/i, "");
+  cleaned = cleaned.replace(/^(?:i\s+want\s+(?:you\s+)?to\s+|i\s+need\s+(?:you\s+)?to\s+|help\s+me\s+)/i, "");
+  cleaned = cleaned.replace(/^(?:zara\s+)/i, "");
+  // Polite suffix
+  cleaned = cleaned.replace(/\s+(?:for\s+me|please|kripya)$/i, "");
+  cleaned = cleaned.replace(/[.?!]+$/g, "").trim();
+  return cleaned.trim();
+}
+
+/**
  * Normalizes common Hindi/Hinglish action phrasing to canonical English forms
  * while preserving query contents.
  */
 export function normalizeCommand(rawText: string): string {
   let text = basicNormalize(rawText);
   if (!text) return "";
+
+  text = stripConversationalPrefixes(text);
 
   // Common Hindi/Hinglish verbal standardizations
   // e.g., "khol do" / "kholo" / "kholna" -> "open"
