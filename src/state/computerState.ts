@@ -99,6 +99,25 @@ export class ComputerStateManager {
   }
 
   /**
+   * Infers the currently active or contextual website target based on URL or window title.
+   */
+  static getCurrentTarget(): string | undefined {
+    const url = currentState.current_url?.toLowerCase() || "";
+    const win = currentState.active_window?.toLowerCase() || "";
+
+    if (url.includes("youtube.com") || url.includes("youtu.be") || win.includes("youtube")) {
+      return "youtube";
+    }
+    if (url.includes("amazon.") || win.includes("amazon")) {
+      return "amazon";
+    }
+    if (url.includes("flipkart.com") || win.includes("flipkart")) {
+      return "flipkart";
+    }
+    return undefined;
+  }
+
+  /**
    * Resets state back to default.
    */
   static reset(): void {

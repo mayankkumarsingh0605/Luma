@@ -1,4 +1,5 @@
 import { ComputerStateManager } from "../state/computerState.js";
+import { BrowserAgent } from "../agent/browserAgent.js";
 import type { WorkflowContext, WorkflowResult } from "./types.js";
 
 /**
@@ -9,6 +10,26 @@ export async function executeMediaWorkflow(
   context: WorkflowContext
 ): Promise<WorkflowResult> {
   const cleanAction = action.toLowerCase().trim();
+
+  // 1. If play, pause, or resume, try direct browser in-tab video control first
+  if (cleanAction === "pause" || cleanAction === "resume" || cleanAction === "play") {
+    try {
+      const browserRes = await BrowserAgent.control_playback(cleanAction as any);
+      if (browserRes.success) {
+        context.onProgress(browserRes.message, "completed");
+        ComputerStateManager.update({
+          last_action: browserRes.message,
+          last_action_status: "success",
+        });
+        return {
+          success: true,
+          message: browserRes.message,
+        };
+      }
+    } catch {
+      // Non-fatal, fallback to system media key
+    }
+  }
 
   const labels: Record<string, string> = {
     play: "Starting media playback...",

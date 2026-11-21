@@ -321,4 +321,175 @@ export class BrowserAgent {
     const res = await this.executeTool("get_clipboard_text");
     return res.result?.text || "";
   }
+
+  /**
+   * Opens and plays the first video from search results.
+   */
+  static async play_first_video(
+    site?: string
+  ): Promise<{ success: boolean; message: string; url?: string; title?: string }> {
+    const res = await this.executeTool("browser_play_first_video", { site });
+    const isOk = res?.success && (res.result ? res.result.success !== false : true);
+    if (isOk) {
+      return {
+        success: true,
+        message: res.result?.message || "Playing first video.",
+        url: res.result?.url,
+        title: res.result?.title,
+      };
+    }
+    return {
+      success: false,
+      message: res?.result?.message || res?.error || "Could not play first video.",
+    };
+  }
+
+  /**
+   * Controls playback (play, pause, resume) inside the active browser tab.
+   */
+  static async control_playback(
+    action: "play" | "pause" | "resume"
+  ): Promise<{ success: boolean; message: string; paused?: boolean }> {
+    const res = await this.executeTool("browser_control_playback", { action });
+    const isOk = res?.success && (res.result ? res.result.success !== false : true);
+    if (isOk) {
+      return {
+        success: true,
+        message: res.result?.message || `Playback ${action} executed.`,
+        paused: res.result?.paused,
+      };
+    }
+    return {
+      success: false,
+      message: res?.result?.message || res?.error || `Could not ${action} playback.`,
+    };
+  }
+
+  /**
+   * Retrieves video results from the active search page.
+   */
+  static async get_video_results(
+    limit: number = 3
+  ): Promise<Array<{ title: string; url: string; videoId?: string }>> {
+    const res = await this.executeTool("browser_get_video_results", { limit });
+    if (res?.success && Array.isArray(res.result)) {
+      return res.result;
+    }
+    return [];
+  }
+
+  /**
+   * Creates a user playlist with a given name.
+   */
+  static async create_playlist(
+    name: string
+  ): Promise<{ success: boolean; message: string; playlist?: any }> {
+    const res = await this.executeTool("youtube_create_playlist", { name });
+    if (res?.success) {
+      return {
+        success: true,
+        message: `Playlist "${name}" created successfully.`,
+        playlist: res.result,
+      };
+    }
+    return {
+      success: false,
+      message: res?.error || `Could not create playlist "${name}".`,
+    };
+  }
+
+  /**
+   * Adds videos to a playlist.
+   */
+  static async add_to_playlist(
+    playlistName: string,
+    videos?: Array<{ title: string; url: string; videoId?: string }>,
+    limit?: number
+  ): Promise<{ success: boolean; message: string; count?: number }> {
+    const res = await this.executeTool("youtube_add_to_playlist", {
+      playlist_name: playlistName,
+      videos,
+      limit: limit || 3,
+    });
+    if (res?.success) {
+      const added = res.result?.addedCount ?? (videos?.length || 0);
+      return {
+        success: true,
+        message: `Added ${added} video(s) to playlist "${playlistName}".`,
+        count: added,
+      };
+    }
+    return {
+      success: false,
+      message: res?.error || `Could not add videos to playlist "${playlistName}".`,
+    };
+  }
+
+  /**
+   * Plays a playlist by name.
+   */
+  static async play_playlist(
+    name: string
+  ): Promise<{ success: boolean; message: string; url?: string }> {
+    const res = await this.executeTool("youtube_play_playlist", { name });
+    const isOk = res?.success && (res.result ? res.result.success !== false : true);
+    if (isOk) {
+      return {
+        success: true,
+        message: res.result?.message || `Playing playlist "${name}".`,
+        url: res.result?.url,
+      };
+    }
+    return {
+      success: false,
+      message: res?.result?.message || res?.error || `Could not play playlist "${name}".`,
+    };
+  }
+
+  /**
+   * Removes a video from a playlist.
+   */
+  static async remove_from_playlist(
+    playlistName: string,
+    video: string
+  ): Promise<{ success: boolean; message: string }> {
+    const res = await this.executeTool("youtube_remove_from_playlist", {
+      playlist_name: playlistName,
+      video,
+    });
+    const isOk = res?.success && (res.result ? res.result.success !== false : true);
+    if (isOk) {
+      return {
+        success: true,
+        message: res.result?.message || `Removed "${video}" from playlist "${playlistName}".`,
+      };
+    }
+    return {
+      success: false,
+      message:
+        res?.result?.message || res?.error || `Could not remove "${video}" from playlist "${playlistName}".`,
+    };
+  }
+
+  /**
+   * Gets a playlist by name.
+   */
+  static async get_playlist(
+    name: string
+  ): Promise<{ success: boolean; message: string; playlist?: any }> {
+    const res = await this.executeTool("youtube_get_playlist", { name });
+    if (res?.success && res.result) {
+      const pl = res.result;
+      const count = pl.videos?.length || 0;
+      return {
+        success: true,
+        message: `Playlist "${pl.name}" has ${count} video${count === 1 ? "" : "s"}.`,
+        playlist: pl,
+      };
+    }
+    return {
+      success: false,
+      message: `Playlist "${name}" not found.`,
+    };
+  }
 }

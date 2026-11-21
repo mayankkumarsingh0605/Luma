@@ -76,3 +76,4 @@ export class ModuleRegistry {
     return this.modules.get("generic")!;
   }
 }
+

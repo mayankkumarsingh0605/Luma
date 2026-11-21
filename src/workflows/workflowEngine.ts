@@ -6,6 +6,7 @@ import { executeAppControlWorkflow } from "./appControlWorkflow.js";
 import { executeFileWorkflow } from "./fileWorkflow.js";
 import { executeMediaWorkflow } from "./mediaWorkflow.js";
 import { executeCompoundWorkflow } from "./compoundWorkflow.js";
+import { executeYouTubeWorkflow } from "./youtubeWorkflow.js";
 import { ConfirmationManager } from "../confirmation/confirmationManager.js";
 import { ComputerStateManager } from "../state/computerState.js";
 
@@ -113,6 +114,16 @@ export class WorkflowEngine {
       case "MUTE_MEDIA": {
         const action = args.action || intent.toLowerCase().replace("_media", "");
         return await executeMediaWorkflow(action, context);
+      }
+
+      // 7B. YouTube Video Playback & Playlist Management
+      case "PLAY_FIRST_RESULT":
+      case "YOUTUBE_CREATE_PLAYLIST":
+      case "YOUTUBE_ADD_TO_PLAYLIST":
+      case "YOUTUBE_PLAY_PLAYLIST":
+      case "YOUTUBE_OPEN_PLAYLIST":
+      case "YOUTUBE_REMOVE_FROM_PLAYLIST": {
+        return await executeYouTubeWorkflow(intent, args, context);
       }
 
       // 8. System Inspection & Tools

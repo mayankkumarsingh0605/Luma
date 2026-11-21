@@ -724,6 +724,202 @@ export class ToolRegistry {
         return await BrowserController.getState();
       },
     });
+
+    // 9. YouTube Video Playback and Playlist Tools
+    this.register({
+      definition: {
+        name: "browser_play_first_video",
+        displayName: "Play First Video",
+        description: "Opens and starts playback of the first video in the active YouTube search results.",
+        category: "app",
+        safetyLevel: "SAFE",
+        parameters: [
+          {
+            name: "site",
+            type: "string",
+            description: "Target video platform (default 'youtube').",
+            required: false,
+          },
+        ],
+      },
+      handler: async (args) => {
+        return await BrowserController.playFirstVideo(args?.site);
+      },
+    });
+
+    this.register({
+      definition: {
+        name: "browser_control_playback",
+        displayName: "Control Video Playback",
+        description: "Controls video playback ('play', 'pause', 'resume') on the active webpage.",
+        category: "app",
+        safetyLevel: "SAFE",
+        parameters: [
+          {
+            name: "action",
+            type: "string",
+            description: "Playback action ('play', 'pause', 'resume').",
+            required: true,
+            enum: ["play", "pause", "resume"],
+          },
+        ],
+      },
+      handler: async (args) => {
+        return await BrowserController.controlPlayback(args.action);
+      },
+    });
+
+    this.register({
+      definition: {
+        name: "youtube_create_playlist",
+        displayName: "Create Playlist",
+        description: "Creates a new user playlist with the provided name.",
+        category: "app",
+        safetyLevel: "SAFE",
+        parameters: [
+          {
+            name: "name",
+            type: "string",
+            description: "Name of the playlist to create.",
+            required: true,
+          },
+        ],
+      },
+      handler: async (args) => {
+        return await BrowserController.createPlaylist(args.name);
+      },
+    });
+
+    this.register({
+      definition: {
+        name: "youtube_add_to_playlist",
+        displayName: "Add to Playlist",
+        description: "Adds relevant search result videos or current video to the specified playlist.",
+        category: "app",
+        safetyLevel: "SAFE",
+        parameters: [
+          {
+            name: "playlist_name",
+            type: "string",
+            description: "Name of the playlist.",
+            required: true,
+          },
+          {
+            name: "limit",
+            type: "number",
+            description: "Number of relevant videos to add (default 3).",
+            required: false,
+            default: 3,
+          },
+          {
+            name: "videos",
+            type: "array",
+            description: "Optional pre-extracted video items.",
+            required: false,
+          },
+        ],
+      },
+      handler: async (args) => {
+        const limit = Number(args.limit) || 3;
+        const videos =
+          Array.isArray(args.videos) && args.videos.length > 0
+            ? args.videos
+            : await BrowserController.getVideoResults(limit);
+        return await BrowserController.addVideosToPlaylist(args.playlist_name, videos);
+      },
+    });
+
+    this.register({
+      definition: {
+        name: "browser_get_video_results",
+        displayName: "Get Video Results",
+        description: "Retrieves video cards (title, url, videoId) from the active YouTube page.",
+        category: "app",
+        safetyLevel: "SAFE",
+        parameters: [
+          {
+            name: "limit",
+            type: "number",
+            description: "Maximum number of videos to extract (default 3).",
+            required: false,
+            default: 3,
+          },
+        ],
+      },
+      handler: async (args) => {
+        const limit = Number(args.limit) || 3;
+        return await BrowserController.getVideoResults(limit);
+      },
+    });
+
+    this.register({
+      definition: {
+        name: "youtube_play_playlist",
+        displayName: "Play Playlist",
+        description: "Opens and starts playback of the specified playlist.",
+        category: "app",
+        safetyLevel: "SAFE",
+        parameters: [
+          {
+            name: "name",
+            type: "string",
+            description: "Name of the playlist to play.",
+            required: true,
+          },
+        ],
+      },
+      handler: async (args) => {
+        return await BrowserController.playPlaylist(args.name);
+      },
+    });
+
+    this.register({
+      definition: {
+        name: "youtube_remove_from_playlist",
+        displayName: "Remove from Playlist",
+        description: "Removes a video from the specified playlist by title, videoId, or position keyword.",
+        category: "app",
+        safetyLevel: "SAFE",
+        parameters: [
+          {
+            name: "playlist_name",
+            type: "string",
+            description: "Name of the playlist.",
+            required: true,
+          },
+          {
+            name: "video",
+            type: "string",
+            description: "Title, ID, or position ('first', 'last') of the video to remove.",
+            required: true,
+          },
+        ],
+      },
+      handler: async (args) => {
+        return await BrowserController.removeVideoFromPlaylist(args.playlist_name, args.video);
+      },
+    });
+
+    this.register({
+      definition: {
+        name: "youtube_get_playlist",
+        displayName: "Get Playlist",
+        description: "Retrieves details and video list for a specified playlist.",
+        category: "app",
+        safetyLevel: "SAFE",
+        parameters: [
+          {
+            name: "name",
+            type: "string",
+            description: "Name of the playlist.",
+            required: true,
+          },
+        ],
+      },
+      handler: async (args) => {
+        return await BrowserController.getPlaylist(args.name);
+      },
+    });
   }
 
   /**

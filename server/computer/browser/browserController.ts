@@ -2,6 +2,7 @@
 import type { Page } from "playwright-core";
 import { BrowserSession } from "./browserSession.js";
 import { ModuleRegistry } from "./modules/moduleRegistry.js";
+import { YouTubeModule } from "./modules/youtubeModule.js";
 import type { ProductSearchResult, ExtractedPriceResult } from "./modules/types.js";
 
 export type { ProductSearchResult, ExtractedPriceResult };
@@ -9,18 +10,32 @@ export type { ProductSearchResult, ExtractedPriceResult };
 export class BrowserController {
   /**
    * Checks whether the current page displays a bot check / CAPTCHA wall.
-   * Delegates to active website module while supporting standard title checks.
+   * Delegates to active website module.
    */
   static async isCaptchaPresent(page: Page, siteKey?: string): Promise<boolean> {
     try {
-      if (typeof page?.title === "function") {
-        const title = (await page.title()).toLowerCase();
-        if (title.includes("robot check") || title.includes("captcha") || title.includes("security check")) {
-          return true;
+      let pageUrl = "";
+      try {
+        if (typeof page?.url === "function") {
+          pageUrl = page.url();
+        }
+      } catch {
+        // page.url might fail on mocks or detached pages
+      }
+
+      let key = siteKey;
+      if (!key && !pageUrl) {
+        try {
+          const t = (await page.title()).toLowerCase();
+          if (t.includes("amazon")) key = "amazon";
+          else if (t.includes("youtube")) key = "youtube";
+          else if (t.includes("flipkart")) key = "flipkart";
+        } catch {
+          // Ignore
         }
       }
-      const pageUrl = typeof page?.url === "function" ? page.url() : "";
-      const mod = ModuleRegistry.resolve(siteKey, pageUrl);
+
+      const mod = ModuleRegistry.resolve(key, pageUrl);
       return await mod.isCaptchaPresent(page);
     } catch {
       return false;
@@ -307,5 +322,157 @@ export class BrowserController {
         pageStatus: "UNAVAILABLE",
       };
     }
+  }
+
+  /**
+   * Plays the first organic video from YouTube search results.
+   */
+  static async playFirstVideo(siteKey?: string): Promise<{
+    success: boolean;
+    title?: string;
+    url?: string;
+    message: string;
+    error?: string;
+  }> {
+    try {
+      const page = await BrowserSession.getActivePage();
+      const mod = ModuleRegistry.resolve(siteKey || "youtube", page.url());
+      if (mod instanceof YouTubeModule || "playFirstVideo" in mod) {
+        return await (mod as any).playFirstVideo(page);
+      }
+      return {
+        success: false,
+        message: `Playing videos is not supported on ${mod.displayName}.`,
+        error: "Unsupported module",
+      };
+    } catch (err: any) {
+      return {
+        success: false,
+        message: `Could not play video: ${err?.message || "Unknown error"}`,
+        error: err?.message,
+      };
+    }
+  }
+
+  /**
+   * Controls playback (play, pause, resume) on the active webpage.
+   */
+  static async controlPlayback(action: "play" | "pause" | "resume"): Promise<{
+    success: boolean;
+    paused?: boolean;
+    message: string;
+    error?: string;
+  }> {
+    try {
+      const page = await BrowserSession.getActivePage();
+      const mod = ModuleRegistry.resolve(undefined, page.url());
+      if (mod instanceof YouTubeModule || "controlPlayback" in mod) {
+        return await (mod as any).controlPlayback(page, action);
+      }
+
+      // Generic HTML5 video control fallback
+      const res = await page.evaluate((act) => {
+        const v = document.querySelector<HTMLVideoElement>("video");
+        if (v) {
+          if (act === "pause") v.pause();
+          else v.play().catch(() => {});
+          return { success: true, paused: v.paused };
+        }
+        return { success: false };
+      }, action);
+
+      if (res.success) {
+        return {
+          success: true,
+          paused: res.paused,
+          message: `${action === "pause" ? "Paused" : "Resumed"} video playback.`,
+        };
+      }
+
+      return {
+        success: false,
+        message: "No active video player found on current page.",
+      };
+    } catch (err: any) {
+      return {
+        success: false,
+        message: `Could not control playback: ${err?.message || "Unknown error"}`,
+        error: err?.message,
+      };
+    }
+  }
+
+  /**
+   * Retrieves video results from the active YouTube page.
+   */
+  static async getVideoResults(limit: number = 3): Promise<Array<{ title: string; url: string; videoId?: string }>> {
+    try {
+      const page = await BrowserSession.getActivePage();
+      const mod = ModuleRegistry.resolve("youtube", page.url());
+      if (mod instanceof YouTubeModule || "getVideoResults" in mod) {
+        return await (mod as any).getVideoResults(page, limit);
+      }
+      return [];
+    } catch {
+      return [];
+    }
+  }
+
+  /**
+   * Creates a user playlist.
+   */
+  static async createPlaylist(name: string): Promise<any> {
+    const { YouTubePlaylistManager } = await import("./modules/youtubePlaylistManager.js");
+    return await YouTubePlaylistManager.createPlaylist(name);
+  }
+
+  /**
+   * Adds videos to a user playlist.
+   */
+  static async addVideosToPlaylist(
+    playlistName: string,
+    videos: Array<{ title: string; url: string; videoId?: string }>
+  ): Promise<any> {
+    const { YouTubePlaylistManager } = await import("./modules/youtubePlaylistManager.js");
+    return await YouTubePlaylistManager.addVideosToPlaylist(playlistName, videos);
+  }
+
+  /**
+   * Plays a user playlist by name.
+   */
+  static async playPlaylist(name: string): Promise<{ success: boolean; message: string; url?: string }> {
+    const { YouTubePlaylistManager } = await import("./modules/youtubePlaylistManager.js");
+    const playlist = await YouTubePlaylistManager.getPlaylist(name);
+    if (!playlist) {
+      return {
+        success: false,
+        message: `Playlist "${name}" not found.`,
+      };
+    }
+    const page = await BrowserSession.getActivePage();
+    const mod = ModuleRegistry.resolve("youtube", page.url());
+    if (mod instanceof YouTubeModule || "playPlaylist" in mod) {
+      return await (mod as any).playPlaylist(page, playlist);
+    }
+    return {
+      success: false,
+      message: "YouTube module required to play playlist.",
+    };
+  }
+
+  /**
+   * Removes a video from a user playlist.
+   */
+  static async removeVideoFromPlaylist(playlistName: string, identifier: string): Promise<any> {
+    const { YouTubePlaylistManager } = await import("./modules/youtubePlaylistManager.js");
+    return await YouTubePlaylistManager.removeVideoFromPlaylist(playlistName, identifier);
+  }
+
+  /**
+   * Retrieves a playlist by name.
+   */
+  static async getPlaylist(name: string): Promise<any> {
+    const { YouTubePlaylistManager } = await import("./modules/youtubePlaylistManager.js");
+    return await YouTubePlaylistManager.getPlaylist(name);
   }
 }

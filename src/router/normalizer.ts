@@ -17,6 +17,7 @@ export function basicNormalize(rawText: string): string {
     .toLowerCase()
     .trim()
     .replace(/[!?,;:"'`~*^]+/g, " ")
+    .replace(/\.(?:\s+|$)/g, " ")
     .replace(/\s+/g, " ")
     .trim();
 }

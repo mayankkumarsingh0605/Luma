@@ -26,7 +26,9 @@ export async function executeCompoundWorkflow(
     }
 
     // If this step targeted a specific website (e.g. amazon, youtube), propagate context
-    if (routed.arguments?.target && routed.arguments.target !== "chrome") {
+    if (routed.intent.startsWith("YOUTUBE_") || routed.intent === "PLAY_FIRST_RESULT") {
+      contextualTarget = "youtube";
+    } else if (routed.arguments?.target && routed.arguments.target !== "chrome") {
       contextualTarget = routed.arguments.target;
     } else if (routed.arguments?.site && routed.arguments.site !== "chrome") {
       contextualTarget = routed.arguments.site;

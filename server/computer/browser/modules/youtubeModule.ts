@@ -1,10 +1,13 @@
 /// <reference lib="dom" />
 import type { Page } from "playwright-core";
-import type { WebsiteModule } from "./types.js";
+import type { WebsiteModule, ProductSearchResult } from "./types.js";
+import type { LumaPlaylist } from "./youtubePlaylistManager.js";
 
 /**
  * YouTube Automation Module
- * Handles SPA navigation, Lit/Polymer custom elements, and consent overlays.
+ *
+ * Implements Stage A (reliable search, video selection, playback control)
+ * and Stage B (playlist creation, batch addition, playback, and management).
  */
 export class YouTubeModule implements WebsiteModule {
   readonly id = "youtube";
@@ -54,6 +57,9 @@ export class YouTubeModule implements WebsiteModule {
     }
   }
 
+  /**
+   * Enters the exact user query into YouTube's search box and submits reliably.
+   */
   async fillAndSubmitSearch(
     page: Page,
     query: string
@@ -73,7 +79,7 @@ export class YouTubeModule implements WebsiteModule {
       await page.waitForLoadState("domcontentloaded", { timeout: 5000 }).catch(() => {});
       await this.dismissPopups(page);
 
-      // YouTube search input selectors (Polymer custom elements)
+      // YouTube search input selectors (Polymer/Lit custom elements)
       const inputSelectors = [
         "input#search",
         "input[name='search_query']",
@@ -100,8 +106,7 @@ export class YouTubeModule implements WebsiteModule {
       }
 
       if (!foundInput) {
-        // Direct navigation fallback if custom element didn't mount in time
-        console.log("[YouTubeModule] Search box locator not yet attached, falling back to results navigation");
+        console.log("[YouTubeModule] Search box locator not yet attached, falling back to direct results navigation");
         const searchUrl = `https://www.youtube.com/results?search_query=${encodeURIComponent(cleanQuery)}`;
         await page.goto(searchUrl, { waitUntil: "domcontentloaded", timeout: 15000 });
         return {
@@ -161,6 +166,9 @@ export class YouTubeModule implements WebsiteModule {
     }
   }
 
+  /**
+   * Verifies that the current page is a valid YouTube search results page for the query.
+   */
   async verifySearchResults(
     page: Page,
     query: string
@@ -210,5 +218,208 @@ export class YouTubeModule implements WebsiteModule {
         error: `Could not verify YouTube search results: ${err?.message || "Unknown error"}`,
       };
     }
+  }
+
+  /**
+   * Extracts the first organic video item from the rendered search results.
+   */
+  async getFirstProduct(
+    page: Page
+  ): Promise<{
+    success: boolean;
+    result?: ProductSearchResult;
+    error?: string;
+  }> {
+    const videos = await this.getVideoResults(page, 1);
+    if (videos.length > 0) {
+      return {
+        success: true,
+        result: {
+          productTitle: videos[0].title,
+          productUrl: videos[0].url,
+          id: videos[0].videoId,
+        },
+      };
+    }
+    return {
+      success: false,
+      error: "No video results found on YouTube search results page.",
+    };
+  }
+
+  /**
+   * Extracts multiple video items from search results (for batch playlist addition).
+   */
+  async getVideoResults(
+    page: Page,
+    limit: number = 3
+  ): Promise<Array<{ title: string; url: string; videoId?: string }>> {
+    await this.dismissPopups(page);
+
+    await page
+      .waitForSelector("ytd-video-renderer, a#video-title", { timeout: 6000 })
+      .catch(() => {});
+
+    return await page.evaluate((maxCount) => {
+      const results: Array<{ title: string; url: string; videoId?: string }> = [];
+      const cards = Array.from(document.querySelectorAll("ytd-video-renderer"));
+
+      for (const card of cards) {
+        if (results.length >= maxCount) break;
+
+        const titleEl = card.querySelector<HTMLElement>("#video-title, a#video-title");
+        const title = titleEl?.innerText?.trim() || titleEl?.getAttribute("title")?.trim();
+        const href = titleEl?.getAttribute("href") || card.querySelector("a#thumbnail")?.getAttribute("href");
+
+        if (title && href && href.includes("/watch")) {
+          const fullUrl = href.startsWith("http") ? href : `https://www.youtube.com${href}`;
+          const match = fullUrl.match(/[?&]v=([a-zA-Z0-9_-]{11})/);
+          results.push({
+            title,
+            url: fullUrl,
+            videoId: match ? match[1] : undefined,
+          });
+        }
+      }
+
+      // Fallback: search all anchor tags pointing to /watch?v=
+      if (results.length === 0) {
+        const anchors = Array.from(document.querySelectorAll<HTMLAnchorElement>("a[href*='/watch?v=']"));
+        for (const a of anchors) {
+          if (results.length >= maxCount) break;
+          const title = a.innerText?.trim() || a.getAttribute("title")?.trim() || a.getAttribute("aria-label")?.trim();
+          const href = a.getAttribute("href") || "";
+          if (title && title.length > 4 && href.includes("/watch?v=")) {
+            const fullUrl = href.startsWith("http") ? href : `https://www.youtube.com${href}`;
+            if (!results.some((r) => r.url === fullUrl)) {
+              results.push({
+                title,
+                url: fullUrl,
+              });
+            }
+          }
+        }
+      }
+
+      return results;
+    }, limit);
+  }
+
+  /**
+   * Plays the first organic video found on the active page.
+   */
+  async playFirstVideo(
+    page: Page
+  ): Promise<{ success: boolean; title?: string; url?: string; message: string }> {
+    const first = await this.getFirstProduct(page);
+    if (!first.success || !first.result) {
+      throw new Error("Could not find any video result to play.");
+    }
+
+    const { productTitle, productUrl } = first.result;
+    console.log(`[YouTubeModule] Playing first video: "${productTitle}" (${productUrl})`);
+
+    await page.goto(productUrl, { waitUntil: "domcontentloaded", timeout: 20000 });
+    await this.dismissPopups(page);
+
+    // Wait for <video> element to appear and start playback
+    await page.waitForSelector("video", { timeout: 8000 }).catch(() => {});
+    await this.controlPlayback(page, "play");
+
+    return {
+      success: true,
+      title: productTitle,
+      url: productUrl,
+      message: `Playing video: "${productTitle}".`,
+    };
+  }
+
+  /**
+   * Controls live video playback directly inside the YouTube web player.
+   */
+  async controlPlayback(
+    page: Page,
+    action: "play" | "pause" | "resume"
+  ): Promise<{ success: boolean; paused: boolean; message: string }> {
+    await this.dismissPopups(page);
+
+    const result = await page.evaluate((act) => {
+      const video = document.querySelector<HTMLVideoElement>("video");
+      if (!video) {
+        return { success: false, paused: true, error: "No video element found on page." };
+      }
+
+      if (act === "pause") {
+        video.pause();
+      } else {
+        video.play().catch(() => {});
+      }
+
+      return {
+        success: true,
+        paused: video.paused,
+      };
+    }, action);
+
+    if (!result.success) {
+      // Fallback: press Space or 'k' on player
+      await page.keyboard.press("k").catch(() => {});
+      return {
+        success: true,
+        paused: action === "pause",
+        message: `${action === "pause" ? "Paused" : "Resumed"} video playback.`,
+      };
+    }
+
+    const msg = action === "pause" ? "Video paused." : "Playback resumed.";
+    return {
+      success: true,
+      paused: result.paused,
+      message: msg,
+    };
+  }
+
+  /**
+   * Checks whether the current Chrome session has an active signed-in Google account on YouTube.
+   */
+  async isUserSignedIn(page: Page): Promise<boolean> {
+    try {
+      const avatarBtn = page.locator("ytd-topbar-menu-button-renderer #avatar-btn, button#avatar-btn, #avatar-btn").first();
+      const hasAvatar = await avatarBtn.isVisible({ timeout: 1000 }).catch(() => false);
+      if (hasAvatar) return true;
+
+      const signInBtn = page.locator("a[href*='accounts.google.com'][aria-label*='Sign in' i], a:has-text('Sign in')").first();
+      const hasSignIn = await signInBtn.isVisible({ timeout: 1000 }).catch(() => false);
+      return !hasSignIn;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Plays a playlist by navigating to its first video.
+   */
+  async playPlaylist(
+    page: Page,
+    playlist: LumaPlaylist
+  ): Promise<{ success: boolean; message: string; title?: string; url?: string }> {
+    if (!playlist.videos || playlist.videos.length === 0) {
+      throw new Error(`Playlist "${playlist.name}" contains no videos.`);
+    }
+
+    const firstVideo = playlist.videos[0];
+    console.log(`[YouTubeModule] Playing playlist "${playlist.name}" starting with: "${firstVideo.title}"`);
+
+    await page.goto(firstVideo.url, { waitUntil: "domcontentloaded", timeout: 20000 });
+    await this.dismissPopups(page);
+    await page.waitForSelector("video", { timeout: 8000 }).catch(() => {});
+    await this.controlPlayback(page, "play");
+
+    return {
+      success: true,
+      title: firstVideo.title,
+      url: firstVideo.url,
+      message: `Playing playlist "${playlist.name}" (${playlist.videos.length} videos, starting with "${firstVideo.title}").`,
+    };
   }
 }

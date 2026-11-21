@@ -7,6 +7,7 @@ import { matchSearchIntent } from "./intents/searchIntent.js";
 import { matchFileIntent } from "./intents/fileIntent.js";
 import { matchMediaIntent } from "./intents/mediaIntent.js";
 import { matchSystemIntent } from "./intents/systemIntent.js";
+import { matchYouTubeIntent } from "./intents/youtubeIntent.js";
 import { ComputerStateManager } from "../state/computerState.js";
 
 /**
@@ -88,8 +89,14 @@ export function routeCommand(rawCommand: string, contextualTarget?: string): Rou
     subCommands: match.subCommands,
   });
 
+  const effectiveTarget = contextualTarget || ComputerStateManager.getCurrentTarget();
+
+  // YouTube Specialized Intents (video playback, playlists, selection)
+  const ytMatch = matchYouTubeIntent(normalizedCommand, rawCommand, effectiveTarget);
+  if (ytMatch) return toRouted(ytMatch);
+
   // A. Search Intent (e.g. "search Amazon for keyboards", "Amazon pe keyboard search karo")
-  const searchMatch = matchSearchIntent(normalizedCommand, rawCommand, contextualTarget);
+  const searchMatch = matchSearchIntent(normalizedCommand, rawCommand, effectiveTarget);
   if (searchMatch) return toRouted(searchMatch);
 
   // B. File & Folder Operations (e.g. "open downloads", "create folder called Luma", "delete report.pdf")
