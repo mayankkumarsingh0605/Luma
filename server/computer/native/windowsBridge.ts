@@ -7,6 +7,26 @@ const execAsync = promisify(exec);
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const WINDOW_MANAGER_SCRIPT = path.resolve(__dirname, "scripts", "windowManager.ps1");
+const SYSTEM_OBSERVER_SCRIPT = path.resolve(__dirname, "scripts", "systemObserver.ps1");
+
+export interface RunningProcessItem {
+  pid: number;
+  name: string;
+  hasWindow: boolean;
+  isBackground: boolean;
+  threads?: number;
+  memoryMB?: number;
+}
+
+export interface InstalledAppItem {
+  name: string;
+  displayName: string;
+  version: string;
+  publisher: string;
+  installLocation?: string;
+  appId?: string;
+  type: "Desktop Application" | "Windows App";
+}
 
 export interface VisibleWindow {
   hwnd: number;
@@ -15,6 +35,19 @@ export interface VisibleWindow {
   processName: string;
   isForeground: boolean;
   isMinimized: boolean;
+}
+
+export interface FocusWindowResult {
+  success: boolean;
+  hwnd?: number;
+  title?: string;
+  processName?: string;
+  processId?: number;
+  message?: string;
+  error?: string;
+  foregroundHwnd?: number;
+  foregroundTitle?: string;
+  foregroundProcess?: string;
 }
 
 /**
@@ -328,6 +361,42 @@ $ms.Dispose()
   }
 
   /**
+   * Discovers installed applications on Windows across registry and modern packaged apps.
+   */
+  static async getInstalledApplications(): Promise<InstalledAppItem[]> {
+    try {
+      const res = await this.runScriptFile<InstalledAppItem[]>(SYSTEM_OBSERVER_SCRIPT, [
+        "-Action",
+        "installed_apps",
+      ]);
+      return Array.isArray(res) ? res : res ? [res] : [];
+    } catch (err: any) {
+      console.warn("[WindowsBridge] getInstalledApplications error:", err?.message);
+      return [];
+    }
+  }
+
+  /**
+   * Retrieves running processes, distinguishing background processes from visible desktop windows.
+   */
+  static async getRunningProcesses(
+    filter: "all" | "background" | "visible" = "background"
+  ): Promise<RunningProcessItem[]> {
+    try {
+      const res = await this.runScriptFile<RunningProcessItem[]>(SYSTEM_OBSERVER_SCRIPT, [
+        "-Action",
+        "processes",
+        "-Filter",
+        filter,
+      ]);
+      return Array.isArray(res) ? res : res ? [res] : [];
+    } catch (err: any) {
+      console.warn("[WindowsBridge] getRunningProcesses error:", err?.message);
+      return [];
+    }
+  }
+
+  /**
    * Enumerate all visible application windows on the desktop using Win32 EnumDesktopWindows.
    * Filters out cloaked windows, background services, and tooltips.
    */
@@ -417,19 +486,21 @@ if ($pidOut -gt 0) {
 
   /**
    * Focus an application window by title, process name, or HWND.
-   * Restores minimized window, shows it, and brings it to top.
+   * Restores minimized window, shows it, and sets it to the foreground with verification.
    */
-  static async focusWindow(titleOrProcessOrHwnd: string): Promise<boolean> {
+  static async focusWindow(titleOrProcessOrHwnd: string): Promise<FocusWindowResult> {
     try {
-      const res = await this.runScriptFile<{ success: boolean }>(WINDOW_MANAGER_SCRIPT, [
+      const res = await this.runScriptFile<FocusWindowResult>(WINDOW_MANAGER_SCRIPT, [
         "-Action",
         "focus",
         "-Target",
         titleOrProcessOrHwnd,
       ]);
-      if (res && res.success) return true;
-    } catch {
-      // Fallback to WScript.Shell
+      if (res && typeof res.success === "boolean") {
+        return res;
+      }
+    } catch (err: any) {
+      console.warn("[WindowsBridge] focusWindow error:", err?.message);
     }
 
     const jsonTarget = JSON.stringify(titleOrProcessOrHwnd);
@@ -441,9 +512,9 @@ $success = $wshell.AppActivate($target)
 `;
     try {
       const res = await this.runPowerShellJson<{ success: boolean }>(script);
-      return Boolean(res.success);
+      return { success: Boolean(res.success) };
     } catch {
-      return false;
+      return { success: false, error: `Could not activate window '${titleOrProcessOrHwnd}'.` };
     }
   }
 

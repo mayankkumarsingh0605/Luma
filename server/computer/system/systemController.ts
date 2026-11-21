@@ -1,7 +1,12 @@
 import os from "os";
 import { exec } from "child_process";
 import { promisify } from "util";
-import { WindowsBridge, type VisibleWindow } from "../native/windowsBridge.js";
+import {
+  WindowsBridge,
+  type VisibleWindow,
+  type RunningProcessItem,
+  type InstalledAppItem,
+} from "../native/windowsBridge.js";
 import type {
   SystemInfo,
   ScreenInfo,
@@ -86,6 +91,22 @@ export class SystemController {
         count: 0,
       };
     }
+  }
+
+  /**
+   * Enumerates running background processes (or all/visible processes).
+   */
+  static async getRunningProcesses(
+    filter: "all" | "background" | "visible" = "background"
+  ): Promise<RunningProcessItem[]> {
+    return await WindowsBridge.getRunningProcesses(filter);
+  }
+
+  /**
+   * Discovers installed applications on the Windows system.
+   */
+  static async getInstalledApps(): Promise<InstalledAppItem[]> {
+    return await WindowsBridge.getInstalledApplications();
   }
 
   /**

@@ -2,7 +2,7 @@ import fs from "fs";
 import path from "path";
 import { exec } from "child_process";
 import { promisify } from "util";
-import { WindowsBridge } from "../native/windowsBridge.js";
+import { WindowsBridge, type InstalledAppItem } from "../native/windowsBridge.js";
 import type { AppDefinition } from "../types.js";
 
 const execAsync = promisify(exec);
@@ -244,6 +244,14 @@ Get-StartApps | Select-Object Name, AppID | ConvertTo-Json -Compress
     }
 
     return Array.from(this.cachedApps.values());
+  }
+
+  /**
+   * Scans and returns all installed applications from Windows Uninstall Registry keys
+   * and modern packaged / UWP Store applications.
+   */
+  static async getInstalledApplications(): Promise<InstalledAppItem[]> {
+    return await WindowsBridge.getInstalledApplications();
   }
 
   /**

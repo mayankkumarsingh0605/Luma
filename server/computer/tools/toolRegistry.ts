@@ -120,6 +120,54 @@ export class ToolRegistry {
       },
     });
 
+    this.register({
+      definition: {
+        name: "switch_between_apps",
+        displayName: "Switch Between Applications",
+        description: "Switches or toggles between two applications depending on which is currently active.",
+        category: "app",
+        safetyLevel: "SAFE",
+        parameters: [
+          {
+            name: "app",
+            type: "string",
+            description: "First application name.",
+            required: true,
+          },
+          {
+            name: "alternateApp",
+            type: "string",
+            description: "Second application name to alternate with.",
+            required: true,
+          },
+        ],
+      },
+      handler: async (args) => {
+        return await AppController.switchBetweenApps(args.app, args.alternateApp);
+      },
+    });
+
+    this.register({
+      definition: {
+        name: "restore_app",
+        displayName: "Restore Application",
+        description: "Restores an application window if minimized and brings it to foreground without launching a new instance.",
+        category: "app",
+        safetyLevel: "SAFE",
+        parameters: [
+          {
+            name: "app",
+            type: "string",
+            description: "Application name or window title to restore.",
+            required: true,
+          },
+        ],
+      },
+      handler: async (args) => {
+        return await AppController.restoreApp(args.app);
+      },
+    });
+
     // 2. Keyboard Control Tools
     this.register({
       definition: {
@@ -339,6 +387,42 @@ export class ToolRegistry {
       },
       handler: async () => {
         return await SystemController.getVisibleWindows();
+      },
+    });
+
+    this.register({
+      definition: {
+        name: "get_installed_apps",
+        displayName: "Get Installed Applications",
+        description: "Discovers all installed desktop software and Windows Store applications from Windows uninstall registry and app locations.",
+        category: "system",
+        safetyLevel: "SAFE",
+        parameters: [],
+      },
+      handler: async () => {
+        return await SystemController.getInstalledApps();
+      },
+    });
+
+    this.register({
+      definition: {
+        name: "get_running_processes",
+        displayName: "Get Running Processes",
+        description: "Enumerates running system processes, distinguishing background tasks from visible application windows.",
+        category: "system",
+        safetyLevel: "SAFE",
+        parameters: [
+          {
+            name: "type",
+            type: "string",
+            description: "Filter type: 'background', 'visible', or 'all'. Default is 'background'.",
+            required: false,
+            default: "background",
+          },
+        ],
+      },
+      handler: async (args) => {
+        return await SystemController.getRunningProcesses(args.type || "background");
       },
     });
 

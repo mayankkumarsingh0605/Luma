@@ -84,6 +84,17 @@ export function splitCompoundCommand(rawText: string): string[] {
 
   const normalized = basicNormalize(rawText);
 
+  // 1. Non-compound exceptions: phrases containing 'and' that represent single atomic intents
+  // A. "switch between X and Y" / "toggle between X and Y"
+  if (/^(?:switch|toggle|alternate)\s+between\s+.+?\s+(?:and|&)\s+.+$/i.test(normalized)) {
+    return [normalized];
+  }
+
+  // B. "active window title and process" / "title and process"
+  if (/(?:title\s+and\s+process|process\s+and\s+title|title\s+and\s+pid|active\s+window.*and.*process)/i.test(normalized)) {
+    return [normalized];
+  }
+
   // Conjunction split regex: and, aur, then, phir, fir, uske baad
   const conjunctionRegex = /\s+(?:and\s+then|and|aur|then|phir|fir|uske\s+baad)\s+/i;
 

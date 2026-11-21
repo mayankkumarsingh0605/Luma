@@ -1,7 +1,8 @@
 import { spawn, exec } from "child_process";
 import { promisify } from "util";
 import { AppRegistry } from "./appRegistry.js";
-import { WindowsBridge, type VisibleWindow } from "../native/windowsBridge.js";
+import { WindowsBridge, type VisibleWindow, type InstalledAppItem } from "../native/windowsBridge.js";
+import { AppDiscovery } from "./appDiscovery.js";
 import type { AppDefinition } from "../types.js";
 
 const execAsync = promisify(exec);
@@ -251,31 +252,146 @@ export class AppController {
 
   /**
    * Focuses the window of the specified application.
-   * Restores minimized window, shows it, and sets it to the foreground.
+   * Restores minimized window, shows it, and sets it to the foreground with verification.
    */
-  static async focusApp(appName: string): Promise<{ success: boolean; message: string }> {
+  static async focusApp(appName: string): Promise<{
+    success: boolean;
+    message: string;
+    window?: { hwnd: number; title: string; processName: string };
+    error?: string;
+  }> {
     const app = await AppRegistry.findAppAsync(appName);
     const targetTitle = app ? app.displayName : appName;
 
-    // 1. Try focusing by display name or window title
-    let focused = await WindowsBridge.focusWindow(targetTitle);
-
-    // 2. Try focusing by executable / process name
-    if (!focused && app?.executableName) {
-      const baseName = app.executableName.replace(".exe", "");
-      focused = await WindowsBridge.focusWindow(baseName);
+    // Collect candidate targets in priority order
+    const targetsToTry: string[] = [];
+    if (app) {
+      if (app.displayName) targetsToTry.push(app.displayName);
+      if (app.executableName) targetsToTry.push(app.executableName.replace(".exe", ""));
+      if (app.name) targetsToTry.push(app.name);
+    }
+    if (!targetsToTry.includes(appName)) {
+      targetsToTry.push(appName);
     }
 
-    // 3. Try focusing by app name
-    if (!focused && app?.name) {
-      focused = await WindowsBridge.focusWindow(app.name);
+    let lastRes: any = null;
+
+    for (const target of targetsToTry) {
+      const focusRes = await WindowsBridge.focusWindow(target);
+      lastRes = focusRes;
+      if (focusRes.success) {
+        return {
+          success: true,
+          message: focusRes.message || `Switched to ${focusRes.title || targetTitle}.`,
+          window: focusRes.hwnd ? {
+            hwnd: focusRes.hwnd,
+            title: focusRes.title || targetTitle,
+            processName: focusRes.processName || "",
+          } : undefined,
+        };
+      }
+    }
+
+    const errorMsg = lastRes?.error || `Could not bring window '${targetTitle}' to the foreground.`;
+    return {
+      success: false,
+      message: errorMsg,
+      error: errorMsg,
+    };
+  }
+
+  /**
+   * Switches / toggles between two applications (e.g. Chrome and Notepad).
+   * Automatically detects which one is currently active and brings the alternate one to front.
+   */
+  static async switchBetweenApps(
+    appA: string,
+    appB: string
+  ): Promise<{
+    success: boolean;
+    message: string;
+    window?: { hwnd: number; title: string; processName: string };
+    error?: string;
+  }> {
+    const active = await WindowsBridge.getActiveWindowInfo();
+    const activeProc = (active.processName || "").toLowerCase();
+    const activeTitle = (active.title || "").toLowerCase();
+
+    const cleanA = appA.toLowerCase();
+    const cleanB = appB.toLowerCase();
+
+    // Check if appA is currently active
+    const isAActive = activeProc.includes(cleanA) || activeTitle.includes(cleanA);
+    const target = isAActive ? appB : appA;
+
+    return await this.focusApp(target);
+  }
+
+  /**
+   * Restores an existing application window (especially if minimized).
+   * Does NOT launch a new instance when the user asked to restore!
+   */
+  static async restoreApp(appName: string): Promise<{
+    success: boolean;
+    message: string;
+    window?: { hwnd: number; title: string; processName: string };
+    error?: string;
+  }> {
+    if (!appName) {
+      return { success: false, message: "Application name is required." };
+    }
+
+    const app = await AppRegistry.findAppAsync(appName);
+    const targetTitle = app ? app.displayName : appName;
+    const targetCanonical = app ? app.name : appName.toLowerCase();
+
+    // Query open windows
+    const wins = await WindowsBridge.getVisibleWindows();
+    const candidate = wins.find((w) => {
+      const p = (w.processName || "").toLowerCase();
+      const t = (w.title || "").toLowerCase();
+      return (
+        p === targetCanonical ||
+        p.includes(targetCanonical) ||
+        t.includes(targetCanonical) ||
+        (app?.displayName && t.includes(app.displayName.toLowerCase()))
+      );
+    });
+
+    if (!candidate) {
+      // Rule: Do NOT launch a new instance when user asked to restore!
+      return {
+        success: false,
+        message: `No open window found for ${targetTitle} to restore.`,
+        error: `No open window found for ${targetTitle}.`,
+      };
+    }
+
+    // focusWindow unminimizes (SW_RESTORE) and brings to foreground with verification
+    const focusRes = await WindowsBridge.focusWindow(String(candidate.hwnd));
+    if (focusRes.success) {
+      return {
+        success: true,
+        message: `Restored ${focusRes.title || targetTitle} window.`,
+        window: {
+          hwnd: focusRes.hwnd || candidate.hwnd,
+          title: focusRes.title || candidate.title,
+          processName: focusRes.processName || candidate.processName,
+        },
+      };
     }
 
     return {
-      success: focused,
-      message: focused
-        ? `${targetTitle} focused successfully.`
-        : `Could not bring window '${targetTitle}' to the foreground.`,
+      success: false,
+      message: focusRes.error || `Failed to restore ${targetTitle} window.`,
+      error: focusRes.error,
     };
+  }
+
+  /**
+   * Retrieves installed applications from the Windows system.
+   */
+  static async getInstalledApps(): Promise<InstalledAppItem[]> {
+    return await AppDiscovery.getInstalledApplications();
   }
 }

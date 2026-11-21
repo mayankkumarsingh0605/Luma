@@ -43,7 +43,7 @@ export function matchSystemIntent(normalizedText: string, rawText: string): Inte
 
   // 1B. GET_VISIBLE_WINDOWS: "tell me which windows are currently active", "show all open windows", "what is running on my desktop"
   if (
-    /^(?:(?:can\s+you\s+)?(?:please\s+)?(?:tell\s+me\s+|show\s+me\s+)?)?(?:which\s+windows\s+are\s+(?:currently\s+)?(?:active|open)|show\s+(?:me\s+)?(?:all\s+)?open\s+windows|what\s+windows\s+are\s+(?:currently\s+)?open|what\s+is\s+(?:currently\s+)?running\s+on\s+(?:my\s+)?desktop|what\s+is\s+open\s+on\s+(?:my\s+)?desktop|list\s+(?:all\s+)?(?:open\s+|visible\s+)?windows|open\s+windows|visible\s+windows)$/i.test(
+    /^(?:(?:can\s+you\s+)?(?:please\s+)?(?:tell\s+me\s+|show\s+me\s+)?)?(?:which\s+windows\s+are\s+(?:currently\s+)?(?:active|open)|show\s+(?:me\s+)?(?:all\s+)?open\s+windows|show\s+all\s+open\s+visible\s+windows|what\s+windows\s+are\s+(?:currently\s+)?open|what\s+is\s+(?:currently\s+)?running\s+on\s+(?:my\s+)?desktop|what\s+is\s+open\s+on\s+(?:my\s+)?desktop|list\s+(?:all\s+)?(?:open\s+|visible\s+)?windows|open\s+windows|visible\s+windows)$/i.test(
       cleanCmd
     ) ||
     /(?:kaun\s+kaun\s+si\s+window\s+khuli\s+hai|saari\s+khuli\s+windows|desktop\s+pe\s+kya\s+kya\s+khula\s+hai|open\s+windows\s+dikhao)/i.test(
@@ -59,11 +59,49 @@ export function matchSystemIntent(normalizedText: string, rawText: string): Inte
     };
   }
 
-  // 2. GET_ACTIVE_WINDOW: "what window is active?", "which application is currently active?", "active window", "kaunsi window khuli hai?"
+  // 1C. GET_INSTALLED_APPS: "show installed applications", "list installed apps", "what applications are installed"
   if (
-    /^(?:(?:can\s+you\s+)?(?:please\s+)?(?:tell\s+me\s+|show\s+me\s+)?)?(?:what\s+window\s+is\s+active|which\s+(?:window|app|application)\s+is\s+(?:currently\s+)?active|which\s+window\s+is\s+(?:currently\s+)?(?:active|open)|active\s+window|current\s+window|get\s+active\s+window)$/i.test(
+    /^(?:(?:can\s+you\s+)?(?:please\s+)?(?:tell\s+me\s+|show\s+me\s+|list\s+|get\s+|display\s+)?)?(?:(?:all\s+)?installed\s+(?:applications|apps|software|programs)|what\s+(?:applications|apps|software|programs)\s+are\s+installed|installed\s+(?:apps|applications|software|programs))$/i.test(
       cleanCmd
     ) ||
+    /(?:installed\s+(?:apps|applications|software)|kaun\s+kaun\s+se\s+apps?\s+installed\s+hai)/i.test(
+      rawClean
+    )
+  ) {
+    return {
+      matched: true,
+      intent: "GET_INSTALLED_APPS",
+      ruleName: "RULE_GET_INSTALLED_APPS",
+      arguments: {},
+      toolToExecute: "get_installed_apps",
+    };
+  }
+
+  // 1D. GET_BACKGROUND_PROCESSES: "show running background processes", "show background processes", "list background processes", "running processes"
+  if (
+    /^(?:(?:can\s+you\s+)?(?:please\s+)?(?:tell\s+(?:me\s+)?|show\s+(?:me\s+)?|list\s+(?:me\s+)?|get\s+|display\s+|view\s+)?)?(?:(?:all\s+)?(?:running\s+)?(?:background\s+processes|background\s+apps|background\s+tasks|system\s+processes)|running\s+processes|background\s+processes|running\s+background\s+processes)$/i.test(
+      cleanCmd
+    ) ||
+    /(?:background\s+process|running\s+background)/i.test(cleanCmd) ||
+    /(?:background\s+processes?\s+dikhao|kaun\s+se\s+background\s+process\s+chal\s+rahe\s+hain)/i.test(
+      rawClean
+    )
+  ) {
+    return {
+      matched: true,
+      intent: "GET_BACKGROUND_PROCESSES",
+      ruleName: "RULE_GET_BACKGROUND_PROCESSES",
+      arguments: { type: "background" },
+      toolToExecute: "get_running_processes",
+    };
+  }
+
+  // 2. GET_ACTIVE_WINDOW: "what window is active?", "which application is currently active?", "active window", "show active window title and process", "kaunsi window khuli hai?"
+  if (
+    /^(?:(?:can\s+you\s+)?(?:please\s+)?(?:tell\s+me\s+|show\s+me\s+)?)?(?:what\s+window\s+is\s+active|which\s+(?:window|app|application)\s+is\s+(?:currently\s+)?active|which\s+window\s+is\s+(?:currently\s+)?(?:active|open)|active\s+window(?:\s+title)?(?:\s+and\s+process)?|show\s+(?:me\s+)?active\s+window(?:\s+title)?(?:\s+and\s+process)?|active\s+window\s+title\s+and\s+process|current\s+window|get\s+active\s+window)$/i.test(
+      cleanCmd
+    ) ||
+    /(?:active\s+window|active\s+app).*(?:title|process)/i.test(cleanCmd) ||
     /(?:kaunsi\s+window\s+khuli\s+hai|active\s+window\s+kaunsi\s+hai|abhi\s+kaunsi\s+window\s+open\s+hai)/i.test(
       rawClean
     )

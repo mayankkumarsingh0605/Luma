@@ -12,6 +12,7 @@ using System;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Threading;
 
 public class WinWindowManager {
     [DllImport("user32.dll")]
@@ -19,13 +20,22 @@ public class WinWindowManager {
 
     [DllImport("user32.dll", SetLastError = true)]
     public static extern bool EnumDesktopWindows(IntPtr hDesktop, EnumWindowsProc lpEnumFunc, IntPtr lParam);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern bool EnumWindows(EnumWindowsProc lpEnumFunc, IntPtr lParam);
     public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
 
-    [DllImport("user32.dll")]
+    [DllImport("user32.dll", SetLastError = true)]
     public static extern IntPtr OpenInputDesktop(uint dwFlags, bool fInherit, uint dwDesiredAccess);
 
-    [DllImport("user32.dll")]
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern bool SetThreadDesktop(IntPtr hDesktop);
+
+    [DllImport("user32.dll", SetLastError = true)]
     public static extern bool CloseDesktop(IntPtr hDesktop);
+
+    [DllImport("user32.dll")]
+    public static extern bool IsWindow(IntPtr hWnd);
 
     [DllImport("user32.dll")]
     public static extern bool IsWindowVisible(IntPtr hWnd);
@@ -39,6 +49,9 @@ public class WinWindowManager {
     [DllImport("user32.dll")]
     public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
 
+    [DllImport("kernel32.dll")]
+    public static extern uint GetCurrentThreadId();
+
     [DllImport("user32.dll")]
     public static extern bool IsIconic(IntPtr hWnd);
 
@@ -48,11 +61,20 @@ public class WinWindowManager {
     [DllImport("user32.dll")]
     public static extern bool ShowWindowAsync(IntPtr hWnd, int nCmdShow);
 
-    [DllImport("user32.dll")]
+    [DllImport("user32.dll", SetLastError = true)]
     public static extern bool SetForegroundWindow(IntPtr hWnd);
 
     [DllImport("user32.dll")]
     public static extern bool BringWindowToTop(IntPtr hWnd);
+
+    [DllImport("user32.dll")]
+    public static extern void SwitchToThisWindow(IntPtr hWnd, bool fAltTab);
+
+    [DllImport("user32.dll")]
+    public static extern bool AttachThreadInput(uint idAttach, uint idAttachTo, bool fAttach);
+
+    [DllImport("user32.dll")]
+    public static extern void keybd_event(byte bVk, byte bScan, uint dwFlags, int dwExtraInfo);
 
     [DllImport("user32.dll")]
     public static extern IntPtr SendMessage(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam);
@@ -65,6 +87,8 @@ public class WinWindowManager {
     public const int WS_EX_TOOLWINDOW = 0x00000080;
     public const int SW_RESTORE = 9;
     public const int SW_SHOW = 5;
+    public const byte VK_MENU = 0x12;
+    public const uint KEYEVENTF_KEYUP = 0x0002;
     public const uint WM_CLOSE = 0x0010;
 
     public static List<Dictionary<string, object>> GetVisibleWindows() {
@@ -117,19 +141,112 @@ public class WinWindowManager {
         if (hDesktop != IntPtr.Zero) {
             EnumDesktopWindows(hDesktop, proc, IntPtr.Zero);
             CloseDesktop(hDesktop);
+        } else {
+            EnumWindows(proc, IntPtr.Zero);
         }
 
         return list;
     }
 
-    public static bool FocusTargetWindow(IntPtr hWnd) {
-        if (hWnd == IntPtr.Zero) return false;
-        if (IsIconic(hWnd)) {
-            ShowWindowAsync(hWnd, SW_RESTORE);
-        }
-        ShowWindowAsync(hWnd, SW_SHOW);
-        BringWindowToTop(hWnd);
-        return SetForegroundWindow(hWnd);
+    public static Dictionary<string, object> ActivateAndVerify(long targetHwndLong, int expectedPid) {
+        IntPtr targetHwnd = (IntPtr)targetHwndLong;
+        var result = new Dictionary<string, object>();
+        result["requestedHwnd"] = targetHwndLong;
+        result["expectedPid"] = expectedPid;
+
+        var worker = new Thread(() => {
+            IntPtr hDesk = OpenInputDesktop(0, false, 0x0100 | 0x0040);
+            if (hDesk != IntPtr.Zero) {
+                SetThreadDesktop(hDesk);
+            }
+
+            if (!IsWindow(targetHwnd)) {
+                result["success"] = false;
+                result["error"] = "Invalid or closed window handle.";
+                if (hDesk != IntPtr.Zero) CloseDesktop(hDesk);
+                return;
+            }
+
+            IntPtr curFg = GetForegroundWindow();
+            if (curFg == targetHwnd) {
+                result["success"] = true;
+                result["alreadyForeground"] = true;
+                result["finalHwnd"] = targetHwndLong;
+                uint curPid = 0;
+                GetWindowThreadProcessId(targetHwnd, out curPid);
+                result["finalPid"] = (int)curPid;
+                var sbCur = new StringBuilder(512);
+                GetWindowText(targetHwnd, sbCur, 512);
+                result["finalTitle"] = sbCur.ToString().Trim();
+                if (hDesk != IntPtr.Zero) CloseDesktop(hDesk);
+                return;
+            }
+
+            // Unminimize if minimized
+            if (IsIconic(targetHwnd)) {
+                ShowWindowAsync(targetHwnd, SW_RESTORE);
+            }
+            ShowWindowAsync(targetHwnd, SW_SHOW);
+            BringWindowToTop(targetHwnd);
+            SwitchToThisWindow(targetHwnd, true);
+
+            uint fgPid;
+            uint fgThread = (curFg != IntPtr.Zero) ? GetWindowThreadProcessId(curFg, out fgPid) : 0;
+            uint targetPid;
+            uint targetThread = GetWindowThreadProcessId(targetHwnd, out targetPid);
+            uint curThread = GetCurrentThreadId();
+
+            bool a1 = false;
+            bool a2 = false;
+            if (fgThread != 0 && fgThread != curThread) a1 = AttachThreadInput(curThread, fgThread, true);
+            if (targetThread != 0 && targetThread != curThread) a2 = AttachThreadInput(curThread, targetThread, true);
+
+            keybd_event(VK_MENU, 0, 0, 0);
+            keybd_event(VK_MENU, 0, KEYEVENTF_KEYUP, 0);
+
+            bool sfw = SetForegroundWindow(targetHwnd);
+            BringWindowToTop(targetHwnd);
+
+            if (a1) AttachThreadInput(curThread, fgThread, false);
+            if (a2) AttachThreadInput(curThread, targetThread, false);
+
+            IntPtr finalFg = IntPtr.Zero;
+            for (int i = 0; i < 8; i++) {
+                Thread.Sleep(50);
+                finalFg = GetForegroundWindow();
+                if (finalFg == targetHwnd) break;
+            }
+
+            finalFg = GetForegroundWindow();
+            uint finalPid = 0;
+            GetWindowThreadProcessId(finalFg, out finalPid);
+            var sb = new StringBuilder(512);
+            GetWindowText(finalFg, sb, 512);
+            string finalTitle = sb.ToString().Trim();
+
+            string pName = "";
+            try {
+                var p = System.Diagnostics.Process.GetProcessById((int)finalPid);
+                if (p != null) pName = p.ProcessName;
+            } catch {}
+
+            bool isFg = (finalFg == targetHwnd || (expectedPid > 0 && finalPid == expectedPid));
+            result["success"] = isFg;
+            result["finalHwnd"] = finalFg.ToInt64();
+            result["finalPid"] = (int)finalPid;
+            result["finalTitle"] = finalTitle;
+            result["finalProcess"] = pName;
+
+            if (hDesk != IntPtr.Zero) {
+                CloseDesktop(hDesk);
+            }
+        });
+
+        worker.SetApartmentState(ApartmentState.STA);
+        worker.Start();
+        worker.Join();
+
+        return result;
     }
 
     public static bool CloseTargetWindow(IntPtr hWnd) {
@@ -175,6 +292,9 @@ switch ($Action) {
                 try { $pName = (Get-Process -Id $foundPid -ErrorAction SilentlyContinue).ProcessName } catch {}
             }
             $t = $sb.ToString().Trim()
+            if (-not $t) {
+                $t = if ($pName) { "$pName Window" } else { "[No Title]" }
+            }
             if ($t -or $pName) {
                 $active = @{
                     hwnd = $fg.ToInt64()
@@ -188,7 +308,6 @@ switch ($Action) {
         }
 
         if (-not $active) {
-            # Check if any window is marked isForeground
             $active = $windows | Where-Object { $_.isForeground -eq $true } | Select-Object -First 1
         }
 
@@ -211,24 +330,83 @@ switch ($Action) {
     }
     "focus" {
         $windows = [WinWindowManager]::GetVisibleWindows()
+        if (-not $windows -or $windows.Count -eq 0) {
+            @{ success = $false; error = "No open visible windows found on the desktop." } | ConvertTo-Json -Compress
+            return
+        }
+
         $matched = $null
 
+        # 1. Direct HWND numeric match
         if ($Target -match '^\d+$') {
             $hNum = [int64]$Target
             $matched = $windows | Where-Object { $_.hwnd -eq $hNum } | Select-Object -First 1
         }
 
+        $tClean = $Target.ToLower().Trim()
+        $tNormalized = $tClean -replace '\s+(window|app|application)$', ''
+
+        # 2. Exact Title Match
         if (-not $matched) {
-            $tLower = $Target.ToLower().Trim()
             $matched = $windows | Where-Object {
-                $_.title.ToLower().Contains($tLower) -or $_.processName.ToLower().Contains($tLower)
+                $_.title.ToLower() -eq $tClean -or $_.title.ToLower() -eq $tNormalized
             } | Select-Object -First 1
         }
 
+        # 3. Title contains target (prefer restored, topmost)
+        if (-not $matched) {
+            $candidates = $windows | Where-Object {
+                $_.title.ToLower().Contains($tNormalized) -or $_.title.ToLower().Contains($tClean)
+            }
+            if ($candidates) {
+                $matched = ($candidates | Where-Object { $_.isMinimized -eq $false } | Select-Object -First 1)
+                if (-not $matched) {
+                    $matched = $candidates | Select-Object -First 1
+                }
+            }
+        }
+
+        # 4. Process Name Match (e.g. "chrome", "code", "notepad", "mspaint", "explorer")
+        if (-not $matched) {
+            $procCandidates = $windows | Where-Object {
+                $p = $_.processName.ToLower()
+                $p -eq $tNormalized -or
+                $p -eq $tClean -or
+                $p.Contains($tNormalized) -or
+                ($p.Length -ge 3 -and $tNormalized.Contains($p))
+            }
+            if ($procCandidates) {
+                $matched = ($procCandidates | Where-Object { $_.isMinimized -eq $false } | Select-Object -First 1)
+                if (-not $matched) {
+                    $matched = $procCandidates | Select-Object -First 1
+                }
+            }
+        }
+
         if ($matched) {
-            $targetHwnd = [IntPtr][int64]$matched.hwnd
-            $ok = [WinWindowManager]::FocusTargetWindow($targetHwnd)
-            @{ success = $true; hwnd = $matched.hwnd; title = $matched.title; processName = $matched.processName } | ConvertTo-Json -Compress
+            $actRes = [WinWindowManager]::ActivateAndVerify($matched.hwnd, [int]$matched.processId)
+            $isSuccess = [bool]$actRes["success"]
+            if ($isSuccess) {
+                @{
+                    success = $true
+                    hwnd = $actRes["finalHwnd"]
+                    title = $actRes["finalTitle"]
+                    processName = $actRes["finalProcess"]
+                    processId = $actRes["finalPid"]
+                    message = "Switched to '$($actRes["finalTitle"])' ($($actRes["finalProcess"]))."
+                } | ConvertTo-Json -Compress
+            } else {
+                @{
+                    success = $false
+                    hwnd = $matched.hwnd
+                    title = $matched.title
+                    processName = $matched.processName
+                    foregroundHwnd = $actRes["finalHwnd"]
+                    foregroundTitle = $actRes["finalTitle"]
+                    foregroundProcess = $actRes["finalProcess"]
+                    error = "Windows prevented activating '$($matched.title)'. Current foreground window is '$($actRes["finalTitle"])'."
+                } | ConvertTo-Json -Compress
+            }
         } else {
             @{ success = $false; error = "Window not found matching '$Target'." } | ConvertTo-Json -Compress
         }

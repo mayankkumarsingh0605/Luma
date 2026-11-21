@@ -8,18 +8,71 @@ export function matchAppIntent(normalizedText: string, rawText: string): IntentM
   const text = normalizedText.trim();
   const raw = rawText.trim();
 
-  // 1. FOCUS_APP patterns: "switch to chrome", "bring vscode to front", "focus notepad", "chrome pe jao"
-  const bringFrontMatch = text.match(/^bring\s+(.+?)\s+to\s+front$/i);
-  const switchMatch = text.match(/^(?:switch\s+to|focus|bring\s+front)\s+(.+)$/i);
+  // 0. RESTORE_APP patterns: "restore chrome if it is minimized", "restore chrome", "unminimize chrome"
+  const restoreMatch =
+    text.match(/^(?:restore|unminimize)\s+(.+?)(?:\s+if\s+it\s+is\s+minimized)?$/i) ||
+    text.match(/^if\s+(.+?)\s+is\s+minimized\s*,?\s*(?:restore|unminimize)\s+(?:it)?$/i);
+  if (restoreMatch) {
+    const rawTarget = restoreMatch[1].trim();
+    const cleanTarget = rawTarget.replace(/\s+(window|app|application)$/i, "").trim();
+    const resolved = resolveAppAlias(cleanTarget) || resolveAppAlias(rawTarget);
+    const appCanonical = resolved ? resolved.canonical : cleanTarget;
+    const appDisplayName = resolved ? resolved.displayName : cleanTarget;
+    return {
+      matched: true,
+      intent: "RESTORE_APP",
+      ruleName: "RULE_RESTORE_APP",
+      arguments: { app: appCanonical, appDisplayName, restoreOnly: true },
+      toolToExecute: "restore_app",
+    };
+  }
+
+  // 0B. SWITCH_BETWEEN_APPS patterns: "switch between chrome and notepad", "toggle between chrome and notepad"
+  const switchBetweenMatch = text.match(/^(?:switch|toggle|alternate)\s+between\s+(.+?)\s+(?:and|&)\s+(.+)$/i);
+  if (switchBetweenMatch) {
+    const rawA = switchBetweenMatch[1].trim();
+    const rawB = switchBetweenMatch[2].trim();
+    const cleanA = rawA.replace(/\s+(window|app|application)$/i, "").trim();
+    const cleanB = rawB.replace(/\s+(window|app|application)$/i, "").trim();
+    const resA = resolveAppAlias(cleanA) || resolveAppAlias(rawA);
+    const resB = resolveAppAlias(cleanB) || resolveAppAlias(rawB);
+    const appA = resA ? resA.canonical : cleanA;
+    const appB = resB ? resB.canonical : cleanB;
+    return {
+      matched: true,
+      intent: "FOCUS_APP",
+      ruleName: "RULE_SWITCH_BETWEEN_APPS",
+      arguments: {
+        app: appA,
+        alternateApp: appB,
+        mode: "toggle",
+      },
+      toolToExecute: "switch_between_apps",
+    };
+  }
+
+  // 1. FOCUS_APP patterns: "switch to chrome", "switch to chrome window", "bring vscode to front", "bring notepad to foreground", "focus notepad", "chrome pe jao"
+  const bringFrontMatch = text.match(/^bring\s+(.+?)\s+(?:to\s+(?:the\s+)?)?(?:front|foreground)$/i);
+  const switchMatch = text.match(/^(?:switch\s+to|focus|bring\s+front|bring\s+to\s+foreground)\s+(.+)$/i);
   if (bringFrontMatch || switchMatch) {
-    const target = (bringFrontMatch ? bringFrontMatch[1] : switchMatch![1]).trim();
-    const resolved = resolveAppAlias(target);
+    const rawTarget = (bringFrontMatch ? bringFrontMatch[1] : switchMatch![1]).trim();
+    const cleanTarget = rawTarget.replace(/\s+(window|app|application)$/i, "").trim();
+    const resolved = resolveAppAlias(cleanTarget) || resolveAppAlias(rawTarget);
     if (resolved) {
       return {
         matched: true,
         intent: "FOCUS_APP",
         ruleName: "RULE_FOCUS_APP",
-        arguments: { app: resolved.canonical, appDisplayName: resolved.displayName },
+        arguments: { app: resolved.canonical, appDisplayName: resolved.displayName, windowTarget: rawTarget },
+        toolToExecute: "focus_app",
+      };
+    } else if (cleanTarget.length > 0) {
+      // Allow switching to arbitrary window title or process
+      return {
+        matched: true,
+        intent: "FOCUS_APP",
+        ruleName: "RULE_FOCUS_WINDOW_GENERIC",
+        arguments: { app: cleanTarget, appDisplayName: cleanTarget, windowTarget: rawTarget },
         toolToExecute: "focus_app",
       };
     }
@@ -28,14 +81,15 @@ export function matchAppIntent(normalizedText: string, rawText: string): IntentM
   // Suffix: "chrome pe jao", "vscode pe switch karo"
   const focusSuffixMatch = raw.match(/^(.+?)\s+(?:pe\s+jao|par\s+jao|pe\s+switch\s+karo|par\s+switch\s+karo)$/i);
   if (focusSuffixMatch) {
-    const target = focusSuffixMatch[1].trim();
-    const resolved = resolveAppAlias(target);
+    const rawTarget = focusSuffixMatch[1].trim();
+    const cleanTarget = rawTarget.replace(/\s+(window|app|application)$/i, "").trim();
+    const resolved = resolveAppAlias(cleanTarget) || resolveAppAlias(rawTarget);
     if (resolved) {
       return {
         matched: true,
         intent: "FOCUS_APP",
         ruleName: "RULE_FOCUS_APP",
-        arguments: { app: resolved.canonical, appDisplayName: resolved.displayName },
+        arguments: { app: resolved.canonical, appDisplayName: resolved.displayName, windowTarget: rawTarget },
         toolToExecute: "focus_app",
       };
     }

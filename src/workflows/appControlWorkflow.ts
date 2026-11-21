@@ -4,15 +4,25 @@ import { BrowserAgent } from "../agent/browserAgent.js";
 import type { WorkflowContext, WorkflowResult } from "./types.js";
 
 /**
- * Deterministic Windows Application Control Workflow (Open, Close, Focus)
+ * Deterministic Windows Application Control Workflow (Open, Close, Focus, Restore, Switch)
  */
 export async function executeAppControlWorkflow(
-  action: "open" | "close" | "focus",
+  action: "open" | "close" | "focus" | "restore" | "switch_between",
   appCanonical: string,
   appDisplayName: string,
-  context: WorkflowContext
+  context: WorkflowContext,
+  extraArgs?: Record<string, any>
 ): Promise<WorkflowResult> {
-  const verb = action === "open" ? "Opening" : action === "close" ? "Closing" : "Switching to";
+  const verb =
+    action === "open"
+      ? "Opening"
+      : action === "close"
+      ? "Closing"
+      : action === "restore"
+      ? "Restoring"
+      : action === "switch_between"
+      ? "Switching between windows of"
+      : "Switching to";
   context.onProgress(`${verb} ${appDisplayName}...`, "in-progress");
 
   try {
@@ -33,10 +43,24 @@ export async function executeAppControlWorkflow(
       }
     }
 
-    const tool = action === "open" ? "open_app" : action === "close" ? "close_app" : "focus_app";
+    let tool = "focus_app";
+    let args: Record<string, any> = { app: appCanonical, force: true };
+
+    if (action === "open") {
+      tool = "open_app";
+    } else if (action === "close") {
+      tool = "close_app";
+    } else if (action === "restore") {
+      tool = "restore_app";
+      args = { app: appCanonical };
+    } else if (action === "switch_between") {
+      tool = "switch_between_apps";
+      args = { app: appCanonical, alternateApp: extraArgs?.alternateApp || "notepad" };
+    }
+
     const postBody = JSON.stringify({
       tool,
-      arguments: { app: appCanonical, force: true },
+      arguments: args,
     });
 
     let data: any;
@@ -60,7 +84,7 @@ export async function executeAppControlWorkflow(
         if (typeof window === "undefined") {
           const modPath = "../../server/computer/tools/toolExecutor.js";
           const mod = await (Function("m", "return import(m)")(modPath));
-          data = await mod.ToolExecutor.executeTool(tool, { app: appCanonical, force: true });
+          data = await mod.ToolExecutor.executeTool(tool, args);
         } else {
           data = { success: false, error: "Backend server unreachable." };
         }
@@ -106,8 +130,66 @@ export async function executeAppControlWorkflow(
         message: `${appDisplayName} closed successfully.`,
         data: data.result,
       };
+    } else if (action === "restore") {
+      if (!data.success || !data.result?.success) {
+        const errorMsg = data.result?.message || data.result?.error || data.error || `Could not restore ${appDisplayName}.`;
+        context.onProgress(errorMsg, "failed");
+        return {
+          success: false,
+          message: errorMsg,
+          error: data.result?.error || data.error,
+        };
+      }
+
+      const successMsg = data.result?.message || `Restored ${appDisplayName} window.`;
+      context.onProgress(successMsg, "completed");
+      ComputerStateManager.update({
+        active_app: appCanonical,
+        last_action: `Restored ${appDisplayName}`,
+        last_action_status: "success",
+      });
+      return {
+        success: true,
+        message: successMsg,
+        data: data.result,
+      };
+    } else if (action === "switch_between") {
+      if (!data.success || !data.result?.success) {
+        const errorMsg = data.result?.message || data.result?.error || data.error || `Could not switch between ${appDisplayName} and ${extraArgs?.alternateApp}.`;
+        context.onProgress(errorMsg, "failed");
+        return {
+          success: false,
+          message: errorMsg,
+          error: data.result?.error || data.error,
+        };
+      }
+
+      const successMsg = data.result?.message || `Switched to ${data.result?.window?.title || appDisplayName}.`;
+      context.onProgress(successMsg, "completed");
+      ComputerStateManager.update({
+        active_app: data.result?.window?.processName || appCanonical,
+        last_action: `Switched between windows`,
+        last_action_status: "success",
+      });
+      return {
+        success: true,
+        message: successMsg,
+        data: data.result,
+      };
     } else {
-      context.onProgress(`Switched to ${appDisplayName}`, "completed");
+      // Focus action: verify activation succeeded
+      if (!data.success || !data.result?.success) {
+        const errorMsg = data.result?.message || data.result?.error || data.error || `Could not switch to ${appDisplayName}.`;
+        context.onProgress(errorMsg, "failed");
+        return {
+          success: false,
+          message: errorMsg,
+          error: data.result?.error || data.error,
+        };
+      }
+
+      const successMsg = data.result?.message || `Switched to ${appDisplayName}.`;
+      context.onProgress(successMsg, "completed");
       ComputerStateManager.update({
         active_app: appCanonical,
         last_action: `Switched to ${appDisplayName}`,
@@ -115,7 +197,7 @@ export async function executeAppControlWorkflow(
       });
       return {
         success: true,
-        message: `Switched to ${appDisplayName}.`,
+        message: successMsg,
         data: data.result,
       };
     }
