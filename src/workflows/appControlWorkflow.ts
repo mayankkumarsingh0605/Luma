@@ -48,12 +48,23 @@ export async function executeAppControlWorkflow(
       });
       data = await res.json();
     } catch {
-      const res = await fetch("http://localhost:3001/api/computer/execute", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: postBody,
-      });
-      data = await res.json();
+      try {
+        const res = await fetch("http://localhost:3001/api/computer/execute", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: postBody,
+        });
+        data = await res.json();
+      } catch {
+        // Fallback for Node.js scripts when standalone
+        if (typeof window === "undefined") {
+          const modPath = "../../server/computer/tools/toolExecutor.js";
+          const mod = await (Function("m", "return import(m)")(modPath));
+          data = await mod.ToolExecutor.executeTool(tool, { app: appCanonical, force: true });
+        } else {
+          data = { success: false, error: "Backend server unreachable." };
+        }
+      }
     }
 
     if (!data.success) {

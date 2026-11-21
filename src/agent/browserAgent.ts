@@ -20,13 +20,23 @@ export class BrowserAgent {
       return await res.json();
     } catch {
       // Direct backend fallback if proxy connection failed
-      const directUrl = "http://localhost:3001/api/computer/execute";
-      const res = await fetch(directUrl, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ tool, arguments: args }),
-      });
-      return await res.json();
+      try {
+        const directUrl = "http://localhost:3001/api/computer/execute";
+        const res = await fetch(directUrl, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ tool, arguments: args }),
+        });
+        return await res.json();
+      } catch {
+        // If server is not running and running in Node.js environment, execute directly in-process
+        if (typeof window === "undefined") {
+          const modPath = "../../server/computer/tools/toolExecutor.js";
+          const mod = await (Function("m", "return import(m)")(modPath));
+          return await mod.ToolExecutor.executeTool(tool, args);
+        }
+        return { success: false, error: "Backend server unreachable." };
+      }
     }
   }
 
@@ -117,8 +127,8 @@ export class BrowserAgent {
   /**
    * Visibly types text into the search box and submits using real DOM interaction.
    */
-  static async fill_and_submit_search(query: string): Promise<{ success: boolean; message: string; url?: string }> {
-    const res = await this.executeTool("browser_fill_search", { query });
+  static async fill_and_submit_search(query: string, site?: string): Promise<{ success: boolean; message: string; url?: string }> {
+    const res = await this.executeTool("browser_fill_search", { query, site });
     const isOk = res?.success && (res.result ? res.result.success !== false : true);
     if (isOk) {
       return {
@@ -153,8 +163,8 @@ export class BrowserAgent {
   /**
    * Visibly types text into the search box.
    */
-  static async type_into_search(text: string): Promise<{ success: boolean; message: string }> {
-    return await this.fill_and_submit_search(text);
+  static async type_into_search(text: string, site?: string): Promise<{ success: boolean; message: string }> {
+    return await this.fill_and_submit_search(text, site);
   }
 
   /**
@@ -169,8 +179,8 @@ export class BrowserAgent {
   /**
    * Verifies that the search results page has loaded.
    */
-  static async verify_search_results(query: string): Promise<{ success: boolean; message: string }> {
-    const res = await this.executeTool("browser_wait_results", { query });
+  static async verify_search_results(query: string, site?: string): Promise<{ success: boolean; message: string }> {
+    const res = await this.executeTool("browser_wait_results", { query, site });
     if (res.success) {
       return { success: true, message: `Verified search results for "${query}".` };
     }
@@ -186,7 +196,8 @@ export class BrowserAgent {
    */
   static async find_search_results(
     query: string,
-    domain: string = "amazon.in"
+    domain: string = "amazon.in",
+    site?: string
   ): Promise<{
     success: boolean;
     productUrl?: string;
@@ -196,7 +207,7 @@ export class BrowserAgent {
     error?: string;
   }> {
     // 1. Try real rendered DOM extraction first
-    const domRes = await this.executeTool("browser_get_first_product");
+    const domRes = await this.executeTool("browser_get_first_product", { site });
     const item = domRes?.result?.result || domRes?.result;
     if (domRes?.success && item && item.productUrl) {
       return {
@@ -208,15 +219,17 @@ export class BrowserAgent {
       };
     }
 
-    // 2. Fallback to background inspection only if browser DOM was completely unreachable
-    const res = await this.executeTool("inspect_amazon_search", { query, domain });
-    if (res.success && res.result) {
-      return res.result;
+    // 2. Fallback to background inspection only if browser DOM was completely unreachable and site is Amazon
+    if (!site || site === "amazon") {
+      const res = await this.executeTool("inspect_amazon_search", { query, domain });
+      if (res.success && res.result) {
+        return res.result;
+      }
     }
 
     return {
       success: false,
-      error: domRes.error || res.error || "Could not find search results.",
+      error: domRes?.error || "Could not find search results.",
     };
   }
 
@@ -254,7 +267,8 @@ export class BrowserAgent {
    * Extracts the price and product details from the active product page DOM.
    */
   static async find_price(
-    productUrl: string
+    productUrl: string,
+    site?: string
   ): Promise<{
     success: boolean;
     title?: string;
@@ -263,7 +277,7 @@ export class BrowserAgent {
     error?: string;
   }> {
     // 1. Try real rendered DOM extraction from active tab
-    const domRes = await this.executeTool("browser_extract_product_price");
+    const domRes = await this.executeTool("browser_extract_product_price", { site });
     const item = domRes?.result?.result || domRes?.result;
     if (domRes?.success && item && item.price) {
       return {
@@ -274,16 +288,18 @@ export class BrowserAgent {
       };
     }
 
-    // 2. Fallback to HTTP scraper if DOM extraction was unavailable
-    const res = await this.executeTool("inspect_product_price", { url: productUrl });
-    if (res.success && res.result) {
-      return res.result;
+    // 2. Fallback to HTTP scraper only if target is Amazon
+    if (productUrl.includes("amazon.") || site === "amazon") {
+      const res = await this.executeTool("inspect_product_price", { url: productUrl });
+      if (res.success && res.result) {
+        return res.result;
+      }
     }
 
     return {
       success: false,
       price: "Price not found",
-      error: domRes.error || res.error || "Price could not be extracted.",
+      error: domRes?.error || "Price could not be extracted.",
     };
   }
 

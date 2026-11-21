@@ -24,6 +24,8 @@ export class YouTubeSearchAdapter implements SearchAdapter {
 
   async open(context: WorkflowContext): Promise<WorkflowResult> {
     const url = "https://www.youtube.com";
+    context.onProgress("Website detected: YouTube", "in-progress");
+    context.onProgress("Module selected: YouTube", "in-progress");
     context.onProgress("Opening YouTube in browser...", "in-progress");
     await BrowserAgent.open_browser();
     const navRes = await BrowserAgent.navigate_to_url(url);
@@ -53,6 +55,8 @@ export class YouTubeSearchAdapter implements SearchAdapter {
     const cleanQuery = query.trim();
     const homeUrl = "https://www.youtube.com";
 
+    context.onProgress("Website detected: YouTube", "in-progress");
+    context.onProgress("Module selected: YouTube", "in-progress");
     context.onProgress("Connecting to controlled browser session...", "in-progress");
     await BrowserAgent.open_browser();
 
@@ -63,13 +67,14 @@ export class YouTubeSearchAdapter implements SearchAdapter {
     }
 
     context.onProgress(`Entering "${cleanQuery}" into YouTube search box...`, "in-progress");
-    const searchRes = await BrowserAgent.fill_and_submit_search(cleanQuery);
+    const searchRes = await BrowserAgent.fill_and_submit_search(cleanQuery, "youtube");
     if (!searchRes.success) {
       // Fallback: direct search URL navigation
       const searchUrl = `https://www.youtube.com/results?search_query=${encodeURIComponent(cleanQuery)}`;
       await BrowserAgent.navigate_to_url(searchUrl);
     } else {
-      await BrowserAgent.verify_search_results(cleanQuery);
+      context.onProgress("Waiting for results...", "in-progress");
+      await BrowserAgent.verify_search_results(cleanQuery, "youtube");
     }
 
     const resultingUrl = searchRes.url || (await BrowserAgent.get_current_url()) || `https://www.youtube.com/results?search_query=${encodeURIComponent(cleanQuery)}`;
@@ -100,6 +105,8 @@ export class AmazonSearchAdapter implements SearchAdapter {
 
   async open(context: WorkflowContext): Promise<WorkflowResult> {
     const url = "https://www.amazon.in";
+    context.onProgress("Website detected: Amazon", "in-progress");
+    context.onProgress("Module selected: Amazon", "in-progress");
     context.onProgress("Opening Amazon in browser...", "in-progress");
     await BrowserAgent.open_browser();
     const navRes = await BrowserAgent.navigate_to_url(url);
@@ -130,6 +137,8 @@ export class AmazonSearchAdapter implements SearchAdapter {
     const isCom = cleanQuery.includes("$") && !cleanQuery.match(/(?:rs|inr|rupee|₹)/i);
     const homeUrl = isCom ? "https://www.amazon.com" : "https://www.amazon.in";
 
+    context.onProgress("Website detected: Amazon", "in-progress");
+    context.onProgress("Module selected: Amazon", "in-progress");
     context.onProgress("Connecting to controlled browser session...", "in-progress");
     await BrowserAgent.open_browser();
 
@@ -140,14 +149,14 @@ export class AmazonSearchAdapter implements SearchAdapter {
     }
 
     context.onProgress(`Entering "${cleanQuery}" into Amazon search input...`, "in-progress");
-    const searchRes = await BrowserAgent.fill_and_submit_search(cleanQuery);
+    const searchRes = await BrowserAgent.fill_and_submit_search(cleanQuery, "amazon");
     if (!searchRes.success) {
       // Fallback: direct search URL navigation if search box locator failed
       const fallbackUrl = `${homeUrl}/s?k=${encodeURIComponent(cleanQuery)}`;
       await BrowserAgent.navigate_to_url(fallbackUrl);
     } else {
-      context.onProgress("Waiting for search results...", "in-progress");
-      await BrowserAgent.verify_search_results(cleanQuery);
+      context.onProgress("Waiting for results...", "in-progress");
+      await BrowserAgent.verify_search_results(cleanQuery, "amazon");
     }
 
     const resultingUrl = searchRes.url || (await BrowserAgent.get_current_url()) || `${homeUrl}/s?k=${encodeURIComponent(cleanQuery)}`;
@@ -169,6 +178,86 @@ export class AmazonSearchAdapter implements SearchAdapter {
 }
 
 /**
+ * Flipkart Search Adapter (Product Search)
+ * Real DOM search-box interaction with single-session tab reuse.
+ */
+export class FlipkartSearchAdapter implements SearchAdapter {
+  target = "flipkart";
+  displayName = "Flipkart";
+
+  async open(context: WorkflowContext): Promise<WorkflowResult> {
+    const url = "https://www.flipkart.com";
+    context.onProgress("Website detected: Flipkart", "in-progress");
+    context.onProgress("Module selected: Flipkart", "in-progress");
+    context.onProgress("Opening Flipkart in browser...", "in-progress");
+    await BrowserAgent.open_browser();
+    const navRes = await BrowserAgent.navigate_to_url(url);
+    if (!navRes.success) {
+      throw new Error(`Failed to navigate to Flipkart: ${navRes.message}`);
+    }
+    await ActionVerifier.sleep(400);
+
+    const verifiedUrl = navRes.url || url;
+    context.onProgress("Flipkart loaded", "completed");
+    ComputerStateManager.update({
+      active_app: "chrome",
+      current_url: verifiedUrl,
+      current_task: "Opened Flipkart",
+      last_action: "Opened Flipkart",
+      last_action_status: "success",
+    });
+
+    return {
+      success: true,
+      message: "Flipkart opened successfully.",
+      data: { target: this.target, url: verifiedUrl },
+    };
+  }
+
+  async search(query: string, context: WorkflowContext): Promise<WorkflowResult> {
+    const cleanQuery = query.trim();
+    const homeUrl = "https://www.flipkart.com";
+
+    context.onProgress("Website detected: Flipkart", "in-progress");
+    context.onProgress("Module selected: Flipkart", "in-progress");
+    context.onProgress("Connecting to controlled browser session...", "in-progress");
+    await BrowserAgent.open_browser();
+
+    context.onProgress("Navigating to Flipkart homepage...", "in-progress");
+    const navRes = await BrowserAgent.navigate_to_url(homeUrl);
+    if (!navRes.success) {
+      throw new Error(`Failed to navigate to Flipkart: ${navRes.message}`);
+    }
+
+    context.onProgress(`Entering "${cleanQuery}" into Flipkart search input...`, "in-progress");
+    const searchRes = await BrowserAgent.fill_and_submit_search(cleanQuery, "flipkart");
+    if (!searchRes.success) {
+      const fallbackUrl = `https://www.flipkart.com/search?q=${encodeURIComponent(cleanQuery)}`;
+      await BrowserAgent.navigate_to_url(fallbackUrl);
+    } else {
+      context.onProgress("Waiting for results...", "in-progress");
+      await BrowserAgent.verify_search_results(cleanQuery, "flipkart");
+    }
+
+    const resultingUrl = searchRes.url || (await BrowserAgent.get_current_url()) || `https://www.flipkart.com/search?q=${encodeURIComponent(cleanQuery)}`;
+    context.onProgress(`Flipkart results loaded for "${cleanQuery}"`, "completed");
+    ComputerStateManager.update({
+      active_app: "chrome",
+      current_url: resultingUrl,
+      current_task: `Searching Flipkart for ${cleanQuery}`,
+      last_action: `Searched Flipkart for "${cleanQuery}"`,
+      last_action_status: "success",
+    });
+
+    return {
+      success: true,
+      message: `Searched Flipkart for "${cleanQuery}".`,
+      data: { target: this.target, query: cleanQuery, url: resultingUrl },
+    };
+  }
+}
+
+/**
  * Google Search Adapter (General Web Search)
  */
 export class GoogleSearchAdapter implements SearchAdapter {
@@ -177,6 +266,8 @@ export class GoogleSearchAdapter implements SearchAdapter {
 
   async open(context: WorkflowContext): Promise<WorkflowResult> {
     const url = "https://www.google.com";
+    context.onProgress("Website detected: Google", "in-progress");
+    context.onProgress("Module selected: Google", "in-progress");
     context.onProgress("Opening Google in browser...", "in-progress");
     await BrowserAgent.open_browser();
     const navRes = await BrowserAgent.navigate_to_url(url);
@@ -206,6 +297,8 @@ export class GoogleSearchAdapter implements SearchAdapter {
     const cleanQuery = query.trim();
     const homeUrl = "https://www.google.com";
 
+    context.onProgress("Website detected: Google", "in-progress");
+    context.onProgress("Module selected: Google", "in-progress");
     context.onProgress("Connecting to controlled browser session...", "in-progress");
     await BrowserAgent.open_browser();
 
@@ -216,13 +309,13 @@ export class GoogleSearchAdapter implements SearchAdapter {
     }
 
     context.onProgress(`Entering "${cleanQuery}" into search box...`, "in-progress");
-    const searchRes = await BrowserAgent.fill_and_submit_search(cleanQuery);
+    const searchRes = await BrowserAgent.fill_and_submit_search(cleanQuery, "google");
     if (!searchRes.success) {
       const fallbackUrl = `https://www.google.com/search?q=${encodeURIComponent(cleanQuery)}`;
       await BrowserAgent.navigate_to_url(fallbackUrl);
     } else {
-      context.onProgress("Waiting for search results...", "in-progress");
-      await BrowserAgent.verify_search_results(cleanQuery);
+      context.onProgress("Waiting for results...", "in-progress");
+      await BrowserAgent.verify_search_results(cleanQuery, "google");
     }
 
     const resultingUrl = searchRes.url || (await BrowserAgent.get_current_url()) || `https://www.google.com/search?q=${encodeURIComponent(cleanQuery)}`;
@@ -261,6 +354,8 @@ export class GenericSiteAdapter implements SearchAdapter {
   }
 
   async open(context: WorkflowContext): Promise<WorkflowResult> {
+    context.onProgress(`Website detected: ${this.displayName}`, "in-progress");
+    context.onProgress(`Module selected: Generic (${this.displayName})`, "in-progress");
     context.onProgress(`Opening ${this.displayName}...`, "in-progress");
     await launchAndFocusChrome(this.siteUrl);
     await ActionVerifier.sleep(500);
@@ -283,6 +378,8 @@ export class GenericSiteAdapter implements SearchAdapter {
 
   async search(query: string, context: WorkflowContext): Promise<WorkflowResult> {
     const cleanQuery = query.trim();
+    context.onProgress(`Website detected: ${this.displayName}`, "in-progress");
+    context.onProgress(`Module selected: Generic (${this.displayName})`, "in-progress");
     const searchUrl = this.searchUrlTemplate
       ? `${this.searchUrlTemplate}${encodeURIComponent(cleanQuery)}`
       : `${WEBSITE_REGISTRY.google.searchUrl}${encodeURIComponent(`${this.target} ${cleanQuery}`)}`;
@@ -316,6 +413,7 @@ export class GenericSiteAdapter implements SearchAdapter {
 const adapters: Map<string, SearchAdapter> = new Map([
   ["youtube", new YouTubeSearchAdapter()],
   ["amazon", new AmazonSearchAdapter()],
+  ["flipkart", new FlipkartSearchAdapter()],
   ["google", new GoogleSearchAdapter()],
 ]);
 

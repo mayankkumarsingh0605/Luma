@@ -57,13 +57,17 @@ export class TaskPlanner {
     const needsPrice =
       /(?:price|cost|price\s+batao|tell\s+me\s+its\s+price|price\s+kya\s+hai)/i.test(text);
 
-    // 1. Extract Target Site (Google, YouTube, Amazon, etc.)
+    // 1. Extract Target Site (Google, YouTube, Amazon, Flipkart, etc.)
     // DEFAULT IS ALWAYS GOOGLE FOR GENERAL SEARCHES — NEVER DEFAULT TO AMAZON
     let site = "google";
     let siteDisplayName = "Google";
     let siteUrl = "https://www.google.com";
 
-    if (text.includes("youtube") || text.includes("yt")) {
+    if (text.includes("flipkart") || text.includes("flipkart.com")) {
+      site = "flipkart";
+      siteDisplayName = "Flipkart";
+      siteUrl = "https://www.flipkart.com";
+    } else if (text.includes("youtube") || text.includes("yt")) {
       site = "youtube";
       siteDisplayName = "YouTube";
       siteUrl = "https://www.youtube.com";
@@ -92,16 +96,16 @@ export class TaskPlanner {
     // 2. Extract Query keyword (e.g. "wireless keyboards")
     let query = "wireless keyboards";
     const searchMatch =
-      text.match(/(?:(?:on|in)\s+(?:amazon|google|youtube)\s+)?search\s+(?:on\s+|in\s+)?(?:amazon|google|youtube)?\s*(?:for\s+)?([^,]+?)(?:,\s*(?:open|tell)|and\s+(?:open|tell)|\s+open|\s+tell|$)/i) ||
-      text.match(/search\s+(?:amazon|google|youtube)?\s*(?:for\s+)?([^,]+?)(?:,\s*(?:open|tell)|and\s+(?:open|tell)|\s+open|\s+tell|$)/i) ||
-      text.match(/(?:amazon|google|youtube)?\s*(?:pe|par|mein|me)\s+([^,]+?)\s+(?:search|dhundo)/i) ||
+      text.match(/(?:(?:on|in)\s+(?:amazon|flipkart|google|youtube)\s+)?search\s+(?:on\s+|in\s+)?(?:amazon|flipkart|google|youtube)?\s*(?:for\s+)?([^,]+?)(?:,\s*(?:open|tell)|and\s+(?:open|tell)|\s+open|\s+tell|$)/i) ||
+      text.match(/search\s+(?:amazon|flipkart|google|youtube)?\s*(?:for\s+)?([^,]+?)(?:,\s*(?:open|tell)|and\s+(?:open|tell)|\s+open|\s+tell|$)/i) ||
+      text.match(/(?:amazon|flipkart|google|youtube)?\s*(?:pe|par|mein|me)\s+([^,]+?)\s+(?:search|dhundo)/i) ||
       text.match(/(?:for\s+)([^,]+?)(?:,\s*(?:open|tell)|and\s+(?:open|tell)|\s+open|\s+tell|$)/i) ||
       text.match(/([a-zA-Z0-9\s]+?)\s+(?:search\s*karo|dhundo)/i);
 
     if (searchMatch && searchMatch[1]) {
       const candidate = searchMatch[1]
-        .replace(/^(?:for\s+|amazon\s+|google\s+|youtube\s+)/i, "")
-        .replace(/\b(?:on\s+amazon|on\s+google|on\s+youtube|in\s+amazon)\b/i, "")
+        .replace(/^(?:for\s+|amazon\s+|flipkart\s+|google\s+|youtube\s+)/i, "")
+        .replace(/\b(?:on\s+amazon|on\s+flipkart|on\s+google|on\s+youtube|in\s+amazon|in\s+flipkart)\b/i, "")
         .trim();
       if (candidate.length > 0) {
         query = candidate;

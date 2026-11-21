@@ -608,10 +608,16 @@ export class ToolRegistry {
             description: "Exact search query string to enter.",
             required: true,
           },
+          {
+            name: "site",
+            type: "string",
+            description: "Optional website identifier (e.g. 'flipkart', 'amazon', 'youtube', 'google').",
+            required: false,
+          },
         ],
       },
       handler: async (args) => {
-        return await BrowserController.fillAndSubmitSearch(args.query);
+        return await BrowserController.fillAndSubmitSearch(args.query, args.site);
       },
     });
 
@@ -629,10 +635,16 @@ export class ToolRegistry {
             description: "Search query to verify.",
             required: true,
           },
+          {
+            name: "site",
+            type: "string",
+            description: "Optional website identifier (e.g. 'flipkart', 'amazon', 'youtube', 'google').",
+            required: false,
+          },
         ],
       },
       handler: async (args) => {
-        return await BrowserController.verifySearchResults(args.query);
+        return await BrowserController.verifySearchResults(args.query, args.site);
       },
     });
 
@@ -643,10 +655,17 @@ export class ToolRegistry {
         description: "Inspects rendered DOM search results to identify the first organic product card and its URL.",
         category: "app",
         safetyLevel: "SAFE",
-        parameters: [],
+        parameters: [
+          {
+            name: "site",
+            type: "string",
+            description: "Optional website identifier (e.g. 'flipkart', 'amazon').",
+            required: false,
+          },
+        ],
       },
-      handler: async () => {
-        return await BrowserController.getFirstSearchResult();
+      handler: async (args) => {
+        return await BrowserController.getFirstSearchResult(args?.site);
       },
     });
 
@@ -678,10 +697,17 @@ export class ToolRegistry {
         description: "Extracts the displayed price and product title directly from the rendered product page DOM.",
         category: "app",
         safetyLevel: "SAFE",
-        parameters: [],
+        parameters: [
+          {
+            name: "site",
+            type: "string",
+            description: "Optional website identifier (e.g. 'flipkart', 'amazon').",
+            required: false,
+          },
+        ],
       },
-      handler: async () => {
-        return await BrowserController.extractProductPrice();
+      handler: async (args) => {
+        return await BrowserController.extractProductPrice(args?.site);
       },
     });
 

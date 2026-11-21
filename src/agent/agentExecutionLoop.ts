@@ -93,10 +93,11 @@ export class AgentExecutionLoop {
 
             case "search_input": {
               const query = step.params?.query || "wireless keyboards";
-              AgentStateManager.setCurrentAction(`Entering search for "${query}" in browser search input...`);
+              const site = step.params?.site || "amazon";
+              AgentStateManager.setCurrentAction(`Entering search for "${query}" in ${site} search input...`);
 
               // Visibly locate search input, fill exact query, verify, and submit
-              await BrowserAgent.fill_and_submit_search(query);
+              await BrowserAgent.fill_and_submit_search(query, site);
 
               stepSuccess = true;
               AgentStateManager.updateStep(step.step, {
@@ -109,9 +110,10 @@ export class AgentExecutionLoop {
 
             case "wait_results": {
               const query = step.params?.query || "wireless keyboards";
-              AgentStateManager.setCurrentAction("Waiting for search results page to load...");
+              const site = step.params?.site || "amazon";
+              AgentStateManager.setCurrentAction(`Waiting for ${site} search results page to load...`);
               await BrowserAgent.wait_for_page(1000);
-              await BrowserAgent.verify_search_results(query);
+              await BrowserAgent.verify_search_results(query, site);
 
               stepSuccess = true;
               AgentStateManager.updateStep(step.step, {
@@ -124,13 +126,15 @@ export class AgentExecutionLoop {
 
             case "open_first_result": {
               const query = step.params?.query || "wireless keyboards";
-              AgentStateManager.setCurrentAction(`Identifying first product for "${query}"...`);
+              const site = step.params?.site || "amazon";
+              const domain = site === "amazon" ? "amazon.in" : site;
+              AgentStateManager.setCurrentAction(`Identifying first product for "${query}" on ${site}...`);
 
-              const inspectRes = await BrowserAgent.find_search_results(query, "amazon.in");
+              const inspectRes = await BrowserAgent.find_search_results(query, domain, site);
 
               if (inspectRes.success && inspectRes.productUrl) {
                 targetProductUrl = inspectRes.productUrl;
-                targetProductTitle = inspectRes.productTitle || "Wireless Keyboard";
+                targetProductTitle = inspectRes.productTitle || "Product";
                 targetPrice = inspectRes.price || "";
 
                 AgentStateManager.setObservation({
@@ -155,13 +159,17 @@ export class AgentExecutionLoop {
             }
 
             case "extract_price": {
-              AgentStateManager.setCurrentAction("Extracting active product price...");
+              const query = step.params?.query || "wireless keyboards";
+              const site = step.params?.site || "amazon";
+              AgentStateManager.setCurrentAction(`Extracting active product price from ${site}...`);
 
               if (!targetProductUrl) {
-                targetProductUrl = "https://www.amazon.in/s?k=wireless+keyboards";
+                targetProductUrl = site === "flipkart"
+                  ? `https://www.flipkart.com/search?q=${encodeURIComponent(query)}`
+                  : `https://www.amazon.in/s?k=${encodeURIComponent(query)}`;
               }
 
-              const priceRes = await BrowserAgent.find_price(targetProductUrl);
+              const priceRes = await BrowserAgent.find_price(targetProductUrl, site);
 
               if (priceRes.success && priceRes.price) {
                 targetPrice = priceRes.price;
