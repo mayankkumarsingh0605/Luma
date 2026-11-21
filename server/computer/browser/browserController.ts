@@ -154,7 +154,7 @@ export class BrowserController {
       const currentUrl = page.url();
       if (currentUrl === "about:blank" || currentUrl === "" || !currentUrl.startsWith("http")) {
         console.log(`[BrowserController] Blank page detected; navigating to ${mod.displayName} home (${mod.defaultHomeUrl})`);
-        await page.goto(mod.defaultHomeUrl, { waitUntil: "domcontentloaded", timeout: 15000 }).catch(() => {});
+        await page.goto(mod.defaultHomeUrl, { waitUntil: "domcontentloaded", timeout: 15000 }).catch(() => { });
       }
 
       return await mod.fillAndSubmitSearch(page, cleanQuery);
@@ -375,7 +375,7 @@ export class BrowserController {
         const v = document.querySelector<HTMLVideoElement>("video");
         if (v) {
           if (act === "pause") v.pause();
-          else v.play().catch(() => {});
+          else v.play().catch(() => { });
           return { success: true, paused: v.paused };
         }
         return { success: false };

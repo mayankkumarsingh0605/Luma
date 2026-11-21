@@ -25,9 +25,11 @@ export async function executeCompoundWorkflow(
       };
     }
 
-    // If this step targeted a specific website (e.g. amazon, youtube), propagate context
+    // If this step targeted a specific website (e.g. amazon, youtube) or opened Chrome, propagate context
     if (routed.intent.startsWith("YOUTUBE_") || routed.intent === "PLAY_FIRST_RESULT") {
       contextualTarget = "youtube";
+    } else if (routed.intent === "OPEN_APP" && routed.arguments?.app === "chrome") {
+      contextualTarget = "google";
     } else if (routed.arguments?.target && routed.arguments.target !== "chrome") {
       contextualTarget = routed.arguments.target;
     } else if (routed.arguments?.site && routed.arguments.site !== "chrome") {

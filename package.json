@@ -10,7 +10,7 @@
     "server": "tsx server/index.ts",
     "build": "tsc -b && vite build",
     "lint": "oxlint",
-    "test": "tsx tests/routerAndWorkflows.test.ts && tsx tests/agentLoop.test.ts && tsx tests/observationEngine.test.ts && tsx tests/browserAutomation.test.ts && tsx tests/modularWebsiteRouting.test.ts && tsx tests/youtubeAutomation.test.ts",
+    "test": "tsx tests/routerAndWorkflows.test.ts && tsx tests/agentLoop.test.ts && tsx tests/observationEngine.test.ts && tsx tests/browserAutomation.test.ts && tsx tests/modularWebsiteRouting.test.ts && tsx tests/youtubeAutomation.test.ts && tsx tests/voiceAssistant.test.ts",
     "preview": "vite preview"
   },
   "dependencies": {

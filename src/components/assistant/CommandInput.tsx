@@ -1,15 +1,22 @@
 import React, { useState, useRef, useEffect } from "react";
+import type { VoiceStatus } from "../../hooks/useVoiceAssistant.js";
 
 interface CommandInputProps {
   onSubmit: (text: string) => void;
   disabled?: boolean;
   placeholder?: string;
+  voiceStatus?: VoiceStatus;
+  onTriggerVoice?: () => void;
+  onToggleMute?: () => void;
 }
 
 export const CommandInput: React.FC<CommandInputProps> = ({
   onSubmit,
   disabled = false,
   placeholder = "Tell LUMA what you want to do...",
+  voiceStatus,
+  onTriggerVoice,
+  onToggleMute,
 }) => {
   const [text, setText] = useState("");
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -69,34 +76,80 @@ export const CommandInput: React.FC<CommandInputProps> = ({
 
         {/* Footer controls inside input card */}
         <div className="mt-2.5 flex items-center justify-between border-t border-white/5 pt-2.5">
-          {/* Left: Input shortcuts and voice placeholder */}
+          {/* Left: Input shortcuts and voice control */}
           <div className="flex items-center gap-2.5">
-            {/* Future Voice Input Placeholder (Disabled / Honest) */}
-            <div className="relative group">
+            {/* Live Always-On Voice Microphone Button */}
+            <div className="relative group flex items-center gap-1.5">
               <button
                 type="button"
-                disabled
-                className="flex h-8 w-8 items-center justify-center rounded-xl bg-white/5 text-gray-500 cursor-not-allowed border border-white/5 transition hover:bg-white/5"
-                title="Voice input coming in Phase 3"
-                aria-label="Voice input placeholder (Disabled)"
+                onClick={() => {
+                  if (voiceStatus?.isMuted) {
+                    onToggleMute?.();
+                  } else {
+                    onTriggerVoice?.();
+                  }
+                }}
+                className={`relative flex h-8 w-8 items-center justify-center rounded-xl border transition-all duration-200 cursor-pointer shadow-sm ${
+                  voiceStatus?.isMuted
+                    ? "bg-red-950/40 border-red-500/30 text-red-400 hover:bg-red-900/60"
+                    : voiceStatus?.state === "RECORDING" || voiceStatus?.state === "AWAKE"
+                    ? "bg-rose-600/30 border-rose-500 text-rose-300 ring-2 ring-rose-500/40 animate-pulse shadow-rose-900/40"
+                    : voiceStatus?.state === "PROCESSING"
+                    ? "bg-amber-600/20 border-amber-500/40 text-amber-300"
+                    : "bg-emerald-950/30 border-emerald-500/30 text-emerald-400 hover:bg-emerald-900/40 hover:border-emerald-500/50"
+                }`}
+                title={
+                  voiceStatus?.isMuted
+                    ? "Microphone is MUTED. Click to unmute."
+                    : voiceStatus?.state === "RECORDING" || voiceStatus?.state === "AWAKE"
+                    ? "Listening... Speak your command!"
+                    : "Always-On Voice: Listening for 'Hey Luma' (Click to talk)"
+                }
+                aria-label="Microphone Voice Control"
               >
-                <svg
-                  className="h-4 w-4"
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth="2"
-                    d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z"
-                  />
-                </svg>
+                {voiceStatus?.isMuted ? (
+                  /* Muted Mic Icon (with slash) */
+                  <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" />
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2" />
+                  </svg>
+                ) : (
+                  /* Active Microphone Icon */
+                  <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
+                  </svg>
+                )}
+
+                {/* Sub-pulse dot if awake / listening */}
+                {!voiceStatus?.isMuted && (
+                  <span className={`absolute -top-1 -right-1 flex h-2.5 w-2.5`}>
+                    <span className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${
+                      voiceStatus?.state === "RECORDING" || voiceStatus?.state === "AWAKE" ? "bg-rose-400" : "bg-emerald-400"
+                    }`} />
+                    <span className={`relative inline-flex rounded-full h-2.5 w-2.5 ${
+                      voiceStatus?.state === "RECORDING" || voiceStatus?.state === "AWAKE" ? "bg-rose-500" : "bg-emerald-500"
+                    }`} />
+                  </span>
+                )}
               </button>
+
+              {/* Mute Toggle Quick Action */}
+              <button
+                type="button"
+                onClick={onToggleMute}
+                className="hidden sm:inline-flex text-[10px] text-gray-500 hover:text-gray-300 font-mono px-1 py-0.5 rounded border border-transparent hover:border-white/10"
+                title={voiceStatus?.isMuted ? "Click to unmute" : "Click to mute"}
+              >
+                {voiceStatus?.isMuted ? "Unmute" : "Mute"}
+              </button>
+
               {/* Tooltip */}
-              <div className="pointer-events-none absolute bottom-full left-0 mb-1.5 hidden w-max rounded-lg bg-gray-900 px-2 py-1 text-[10px] text-gray-400 border border-white/10 shadow-lg group-hover:block">
-                Voice Input (Coming in Phase 3)
+              <div className="pointer-events-none absolute bottom-full left-0 mb-1.5 hidden w-max rounded-lg bg-gray-900 px-2 py-1 text-[10px] text-gray-300 border border-white/10 shadow-lg group-hover:block z-20">
+                {voiceStatus?.isMuted
+                  ? "Microphone Muted (Click to Unmute)"
+                  : voiceStatus?.state === "RECORDING"
+                  ? "Recording Speech Command..."
+                  : "Say 'Hey Luma' or click to talk"}
               </div>
             </div>
 

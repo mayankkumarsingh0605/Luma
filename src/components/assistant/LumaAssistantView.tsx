@@ -4,6 +4,7 @@ import { ComputerActivityPanel } from "./ComputerActivityPanel.js";
 import { AgentExecutionPanel } from "./AgentExecutionPanel.js";
 import { AgentStateManager } from "../../agent/agentStateManager.js";
 import { processUserCommand } from "../../services/commandHandler.js";
+import { useVoiceAssistant } from "../../hooks/useVoiceAssistant.js";
 import type { UserCommand, CommandStatus } from "../../types/command.js";
 
 interface LumaAssistantViewProps {
@@ -16,7 +17,73 @@ export const LumaAssistantView: React.FC<LumaAssistantViewProps> = ({
   const [commands, setCommands] = useState<UserCommand[]>([]);
   const [status, setStatus] = useState<CommandStatus>("idle");
   const [statusText, setStatusText] = useState("LUMA is ready");
+  const [showVoiceSettings, setShowVoiceSettings] = useState(false);
+  const [startupEnabled, setStartupEnabled] = useState(false);
   const chatBottomRef = useRef<HTMLDivElement>(null);
+
+  // Hook into live Always-On voice assistant
+  const {
+    status: voiceStatus,
+    toggleMute,
+    toggleTtsMute,
+    triggerWakeWord,
+  } = useVoiceAssistant((voiceCmd, voiceResp) => {
+    // Automatically render voice execution in the chat viewport
+    const voiceId = `voice_${Date.now()}`;
+    const newCmd: UserCommand = {
+      id: voiceId,
+      text: voiceCmd,
+      timestamp: new Date().toLocaleTimeString([], {
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+      }),
+      status: "completed",
+      response: voiceResp || "Voice command completed.",
+      activities: [
+        {
+          id: `act_${Date.now()}`,
+          timestamp: new Date().toLocaleTimeString([], {
+            hour: "2-digit",
+            minute: "2-digit",
+            second: "2-digit",
+          }),
+          message: `Spoken response: "${voiceResp || 'Completed'}"`,
+          status: "completed",
+        },
+      ],
+    };
+    setCommands((prev) => [...prev, newCmd]);
+  });
+
+  // Query startup configuration
+  useEffect(() => {
+    fetch("/api/system/startup")
+      .then((res) => res.json())
+      .then((data) => {
+        if (data.success) {
+          setStartupEnabled(data.enabled);
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  const handleToggleStartup = async () => {
+    const nextState = !startupEnabled;
+    try {
+      const res = await fetch("/api/system/startup", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enable: nextState }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setStartupEnabled(nextState);
+      }
+    } catch (err) {
+      console.error("Failed to update startup configuration:", err);
+    }
+  };
 
   // Auto-scroll to bottom of conversation
   useEffect(() => {
@@ -146,21 +213,124 @@ export const LumaAssistantView: React.FC<LumaAssistantViewProps> = ({
           </div>
         </div>
 
-        {/* Real-time Status Badge */}
-        <div
-          className={`flex items-center gap-2 rounded-full border px-3 py-1 text-xs font-mono transition-all duration-300 ${statusConfig.border} ${statusConfig.bg}`}
-        >
-          <div className="relative flex h-2 w-2">
-            <span
-              className={`absolute inline-flex h-full w-full rounded-full opacity-75 ${statusConfig.ping}`}
-            />
-            <span
-              className={`relative inline-flex h-2 w-2 rounded-full ${statusConfig.dot}`}
-            />
+        {/* Right Actions: Voice Assistant Status & Settings */}
+        <div className="flex items-center gap-2.5">
+          {/* Engine Status Badge */}
+          <div
+            className={`hidden sm:flex items-center gap-2 rounded-full border px-3 py-1 text-xs font-mono transition-all duration-300 ${statusConfig.border} ${statusConfig.bg}`}
+          >
+            <div className="relative flex h-2 w-2">
+              <span
+                className={`absolute inline-flex h-full w-full rounded-full opacity-75 ${statusConfig.ping}`}
+              />
+              <span
+                className={`relative inline-flex h-2 w-2 rounded-full ${statusConfig.dot}`}
+              />
+            </div>
+            <span>{statusText}</span>
           </div>
-          <span>{statusText}</span>
+
+          {/* Always-On Voice Status Indicator */}
+          <button
+            type="button"
+            onClick={triggerWakeWord}
+            className={`flex items-center gap-2 rounded-full border px-3 py-1 text-xs font-mono transition-all duration-300 cursor-pointer ${
+              voiceStatus.isMuted
+                ? "border-red-500/30 bg-red-950/30 text-red-400 hover:bg-red-900/40"
+                : voiceStatus.state === "RECORDING" || voiceStatus.state === "AWAKE"
+                ? "border-rose-500 bg-rose-950/50 text-rose-300 ring-2 ring-rose-500/30 animate-pulse"
+                : "border-emerald-500/30 bg-emerald-950/30 text-emerald-300 hover:bg-emerald-900/40"
+            }`}
+            title="Click to trigger 'Hey Luma' wake word"
+          >
+            <span className={`h-2 w-2 rounded-full ${
+              voiceStatus.isMuted
+                ? "bg-red-400"
+                : voiceStatus.state === "RECORDING" || voiceStatus.state === "AWAKE"
+                ? "bg-rose-400 animate-ping"
+                : "bg-emerald-400"
+            }`} />
+            <span>
+              {voiceStatus.isMuted
+                ? "Mic Muted"
+                : voiceStatus.state === "RECORDING"
+                ? "Listening..."
+                : voiceStatus.state === "AWAKE"
+                ? "Awake"
+                : "Say 'Hey Luma'"}
+            </span>
+          </button>
+
+          {/* Settings Toggle Button */}
+          <button
+            type="button"
+            onClick={() => setShowVoiceSettings(!showVoiceSettings)}
+            className="flex h-7 w-7 items-center justify-center rounded-lg border border-white/10 bg-white/5 text-gray-400 hover:text-white hover:bg-white/10 transition cursor-pointer"
+            title="Voice & Background Runtime Settings"
+          >
+            <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+            </svg>
+          </button>
         </div>
       </div>
+
+      {/* Voice & Runtime Settings Drawer / Popover */}
+      {showVoiceSettings && (
+        <div className="border-b border-white/10 bg-[#0c0e14]/95 px-6 py-4 backdrop-blur-lg">
+          <div className="mx-auto max-w-3xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+            <div>
+              <h3 className="text-xs font-semibold text-white tracking-wide">
+                LUMA Background & Always-On Voice Runtime
+              </h3>
+              <p className="text-[11px] text-gray-400 mt-0.5">
+                Local wake-word detection ("Hey Luma") via Windows Speech API. Zero cloud audio streaming.
+              </p>
+            </div>
+            <div className="flex flex-wrap items-center gap-3">
+              {/* Windows Startup Toggle */}
+              <button
+                type="button"
+                onClick={handleToggleStartup}
+                className={`flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs font-medium transition cursor-pointer ${
+                  startupEnabled
+                    ? "border-emerald-500/40 bg-emerald-950/40 text-emerald-300"
+                    : "border-white/10 bg-white/5 text-gray-400 hover:text-white"
+                }`}
+              >
+                <span>{startupEnabled ? "✓ Startup: On" : "Startup: Off"}</span>
+              </button>
+
+              {/* TTS Mute Toggle */}
+              <button
+                type="button"
+                onClick={toggleTtsMute}
+                className={`flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs font-medium transition cursor-pointer ${
+                  voiceStatus.isTtsMuted
+                    ? "border-amber-500/40 bg-amber-950/40 text-amber-300"
+                    : "border-white/10 bg-white/5 text-gray-400 hover:text-white"
+                }`}
+              >
+                <span>{voiceStatus.isTtsMuted ? "🔇 Speech Muted" : "🔊 Speech Active"}</span>
+              </button>
+
+              {/* Mic Mute Toggle */}
+              <button
+                type="button"
+                onClick={toggleMute}
+                className={`flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs font-medium transition cursor-pointer ${
+                  voiceStatus.isMuted
+                    ? "border-red-500/40 bg-red-950/40 text-red-300"
+                    : "border-emerald-500/40 bg-emerald-950/40 text-emerald-300"
+                }`}
+              >
+                <span>{voiceStatus.isMuted ? "Unmute Mic" : "Mute Mic"}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Main Conversation & Task Viewport */}
       <div className="flex-1 overflow-y-auto px-4 py-6 md:px-8 custom-scrollbar">
@@ -340,6 +510,9 @@ export const LumaAssistantView: React.FC<LumaAssistantViewProps> = ({
             onSubmit={handleCommandSubmit}
             disabled={status === "processing"}
             placeholder="Tell LUMA what you want to do... (e.g., 'Amazon pe keyboard search karo', 'open downloads')"
+            voiceStatus={voiceStatus}
+            onTriggerVoice={triggerWakeWord}
+            onToggleMute={toggleMute}
           />
           <div className="mt-2.5 flex items-center justify-between text-[11px] text-gray-600 px-1">
             <span>LUMA Autonomous Desktop Agent • General Desktop Control</span>
