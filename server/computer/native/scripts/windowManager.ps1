@@ -1,6 +1,6 @@
 param (
     [Parameter(Mandatory = $true)]
-    [ValidateSet("list", "active", "focus", "close")]
+    [ValidateSet("list", "active", "focus", "close", "minimize", "restore", "restore_all", "previous")]
     [string]$Action,
 
     [Parameter(Mandatory = $false)]
@@ -52,6 +52,15 @@ public class WinWindowManager {
     [DllImport("kernel32.dll")]
     public static extern uint GetCurrentThreadId();
 
+    [DllImport("kernel32.dll", SetLastError = true)]
+    public static extern IntPtr OpenProcess(uint processAccess, bool bInheritHandle, uint processId);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    public static extern bool QueryFullProcessImageName(IntPtr hProcess, int flags, StringBuilder text, ref int size);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    public static extern bool CloseHandle(IntPtr hObject);
+
     [DllImport("user32.dll")]
     public static extern bool IsIconic(IntPtr hWnd);
 
@@ -87,6 +96,7 @@ public class WinWindowManager {
     public const int WS_EX_TOOLWINDOW = 0x00000080;
     public const int SW_RESTORE = 9;
     public const int SW_SHOW = 5;
+    public const int SW_MINIMIZE = 6;
     public const byte VK_MENU = 0x12;
     public const uint KEYEVENTF_KEYUP = 0x0002;
     public const uint WM_CLOSE = 0x0010;
@@ -126,6 +136,20 @@ public class WinWindowManager {
                 if (p != null) pName = p.ProcessName;
             } catch {}
 
+            if (string.IsNullOrEmpty(pName) && procId > 0) {
+                try {
+                    IntPtr hProc = OpenProcess(0x1000, false, procId);
+                    if (hProc != IntPtr.Zero) {
+                        var sbPath = new StringBuilder(1024);
+                        int sz = sbPath.Capacity;
+                        if (QueryFullProcessImageName(hProc, 0, sbPath, ref sz)) {
+                            pName = System.IO.Path.GetFileNameWithoutExtension(sbPath.ToString());
+                        }
+                        CloseHandle(hProc);
+                    }
+                } catch {}
+            }
+
             var dict = new Dictionary<string, object>();
             dict["hwnd"] = hWnd.ToInt64();
             dict["title"] = title;
@@ -141,7 +165,8 @@ public class WinWindowManager {
         if (hDesktop != IntPtr.Zero) {
             EnumDesktopWindows(hDesktop, proc, IntPtr.Zero);
             CloseDesktop(hDesktop);
-        } else {
+        }
+        if (list.Count == 0) {
             EnumWindows(proc, IntPtr.Zero);
         }
 
@@ -230,6 +255,20 @@ public class WinWindowManager {
                 if (p != null) pName = p.ProcessName;
             } catch {}
 
+            if (string.IsNullOrEmpty(pName) && finalPid > 0) {
+                try {
+                    IntPtr hProc = OpenProcess(0x1000, false, finalPid);
+                    if (hProc != IntPtr.Zero) {
+                        var sbPath = new StringBuilder(1024);
+                        int sz = sbPath.Capacity;
+                        if (QueryFullProcessImageName(hProc, 0, sbPath, ref sz)) {
+                            pName = System.IO.Path.GetFileNameWithoutExtension(sbPath.ToString());
+                        }
+                        CloseHandle(hProc);
+                    }
+                } catch {}
+            }
+
             bool isFg = (finalFg == targetHwnd || (expectedPid > 0 && finalPid == expectedPid));
             result["success"] = isFg;
             result["finalHwnd"] = finalFg.ToInt64();
@@ -253,6 +292,27 @@ public class WinWindowManager {
         if (hWnd == IntPtr.Zero) return false;
         SendMessage(hWnd, WM_CLOSE, IntPtr.Zero, IntPtr.Zero);
         return true;
+    }
+
+    public static bool MinimizeTargetWindow(IntPtr hWnd) {
+        if (!IsWindow(hWnd)) return false;
+        ShowWindowAsync(hWnd, SW_MINIMIZE);
+        for (int i = 0; i < 6; i++) {
+            Thread.Sleep(50);
+            if (IsIconic(hWnd)) return true;
+        }
+        return IsIconic(hWnd);
+    }
+
+    public static bool RestoreTargetWindow(IntPtr hWnd) {
+        if (!IsWindow(hWnd)) return false;
+        ShowWindowAsync(hWnd, SW_RESTORE);
+        ShowWindowAsync(hWnd, SW_SHOW);
+        for (int i = 0; i < 6; i++) {
+            Thread.Sleep(50);
+            if (!IsIconic(hWnd)) return true;
+        }
+        return !IsIconic(hWnd);
     }
 }
 "@
@@ -433,6 +493,161 @@ switch ($Action) {
             @{ success = $true; hwnd = $matched.hwnd; title = $matched.title; processName = $matched.processName } | ConvertTo-Json -Compress
         } else {
             @{ success = $false; error = "Window not found matching '$Target'." } | ConvertTo-Json -Compress
+        }
+    }
+    "minimize" {
+        $windows = [WinWindowManager]::GetVisibleWindows()
+        if (-not $windows -or $windows.Count -eq 0) {
+            @{ success = $false; error = "No open visible windows found to minimize." } | ConvertTo-Json -Compress
+            return
+        }
+
+        $matched = $null
+        if ($Target -match '^\d+$') {
+            $hNum = [int64]$Target
+            $matched = $windows | Where-Object { $_.hwnd -eq $hNum } | Select-Object -First 1
+        }
+
+        $tClean = $Target.ToLower().Trim()
+        $tNormalized = $tClean -replace '\s+(window|app|application)$', ''
+
+        if (-not $matched) {
+            $matched = $windows | Where-Object {
+                $_.title.ToLower() -eq $tClean -or $_.title.ToLower() -eq $tNormalized
+            } | Select-Object -First 1
+        }
+
+        if (-not $matched) {
+            $matched = $windows | Where-Object {
+                $_.title.ToLower().Contains($tNormalized) -or $_.title.ToLower().Contains($tClean)
+            } | Select-Object -First 1
+        }
+
+        if (-not $matched) {
+            $matched = $windows | Where-Object {
+                $p = $_.processName.ToLower()
+                $p -eq $tNormalized -or $p -eq $tClean -or $p.Contains($tNormalized)
+            } | Select-Object -First 1
+        }
+
+        if ($matched) {
+            $targetHwnd = [IntPtr][int64]$matched.hwnd
+            $minOk = [WinWindowManager]::MinimizeTargetWindow($targetHwnd)
+            @{
+                success = $minOk
+                hwnd = $matched.hwnd
+                title = $matched.title
+                processName = $matched.processName
+                message = "Minimized '$($matched.title)' ($($matched.processName))."
+            } | ConvertTo-Json -Compress
+        } else {
+            @{ success = $false; error = "Window not found matching '$Target' to minimize." } | ConvertTo-Json -Compress
+        }
+    }
+    "restore" {
+        $windows = [WinWindowManager]::GetVisibleWindows()
+        if (-not $windows -or $windows.Count -eq 0) {
+            @{ success = $false; error = "No open visible windows found to restore." } | ConvertTo-Json -Compress
+            return
+        }
+
+        $matched = $null
+        if ($Target -match '^\d+$') {
+            $hNum = [int64]$Target
+            $matched = $windows | Where-Object { $_.hwnd -eq $hNum } | Select-Object -First 1
+        }
+
+        $tClean = $Target.ToLower().Trim()
+        $tNormalized = $tClean -replace '\s+(window|app|application)$', ''
+
+        if (-not $matched) {
+            $matched = $windows | Where-Object {
+                $_.title.ToLower() -eq $tClean -or $_.title.ToLower() -eq $tNormalized
+            } | Select-Object -First 1
+        }
+
+        if (-not $matched) {
+            $matched = $windows | Where-Object {
+                $_.title.ToLower().Contains($tNormalized) -or $_.title.ToLower().Contains($tClean)
+            } | Select-Object -First 1
+        }
+
+        if (-not $matched) {
+            $matched = $windows | Where-Object {
+                $p = $_.processName.ToLower()
+                $p -eq $tNormalized -or $p -eq $tClean -or $p.Contains($tNormalized)
+            } | Select-Object -First 1
+        }
+
+        if ($matched) {
+            $targetHwnd = [IntPtr][int64]$matched.hwnd
+            $restOk = [WinWindowManager]::RestoreTargetWindow($targetHwnd)
+            $actRes = [WinWindowManager]::ActivateAndVerify($matched.hwnd, [int]$matched.processId)
+            @{
+                success = $restOk
+                hwnd = $matched.hwnd
+                title = $matched.title
+                processName = $matched.processName
+                message = "Restored '$($matched.title)' ($($matched.processName))."
+            } | ConvertTo-Json -Compress
+        } else {
+            @{ success = $false; error = "Window not found matching '$Target' to restore." } | ConvertTo-Json -Compress
+        }
+    }
+    "restore_all" {
+        $windows = [WinWindowManager]::GetVisibleWindows()
+        $minimized = $windows | Where-Object { $_.isMinimized -eq $true }
+        $restoredCount = 0
+        $restoredList = @()
+
+        if ($minimized) {
+            foreach ($w in $minimized) {
+                $h = [IntPtr][int64]$w.hwnd
+                if ([WinWindowManager]::RestoreTargetWindow($h)) {
+                    $restoredCount++
+                    $restoredList += $w.title
+                }
+            }
+        }
+
+        @{
+            success = $true
+            count = $restoredCount
+            restored = $restoredList
+            message = if ($restoredCount -gt 0) { "Restored $restoredCount minimized application window(s)." } else { "No minimized application windows found to restore." }
+        } | ConvertTo-Json -Compress
+    }
+    "previous" {
+        $windows = [WinWindowManager]::GetVisibleWindows()
+        if (-not $windows -or $windows.Count -lt 2) {
+            @{ success = $false; error = "Not enough open application windows to switch to previous window." } | ConvertTo-Json -Compress
+            return
+        }
+
+        $fg = [WinWindowManager]::GetForegroundWindow()
+        # Find first visible top-level window whose HWND != $fg
+        $prev = $windows | Where-Object { $_.hwnd -ne $fg.ToInt64() -and $_.title.Trim().Length -gt 0 } | Select-Object -First 1
+
+        if ($prev) {
+            $actRes = [WinWindowManager]::ActivateAndVerify($prev.hwnd, [int]$prev.processId)
+            $isSuccess = [bool]$actRes["success"]
+            if ($isSuccess) {
+                @{
+                    success = $true
+                    hwnd = $actRes["finalHwnd"]
+                    title = $actRes["finalTitle"]
+                    processName = $actRes["finalProcess"]
+                    processId = $actRes["finalPid"]
+                    message = "Switched to previous window: '$($actRes["finalTitle"])' ($($actRes["finalProcess"]))."
+                } | ConvertTo-Json -Compress
+            } else {
+                @{
+                    success = $false
+                    error = "Could not activate previous window '$($prev.title)'."
+                } | ConvertTo-Json -Compress
+            }
+        } else {
+            @{ success = $false; error = "No previous window found in Z-order." } | ConvertTo-Json -Compress
         }
     }
 }

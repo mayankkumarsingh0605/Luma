@@ -168,6 +168,55 @@ export class ToolRegistry {
       },
     });
 
+    this.register({
+      definition: {
+        name: "minimize_app",
+        displayName: "Minimize Application",
+        description: "Minimizes an application window.",
+        category: "app",
+        safetyLevel: "SAFE",
+        parameters: [
+          {
+            name: "app",
+            type: "string",
+            description: "Application name or window title to minimize.",
+            required: true,
+          },
+        ],
+      },
+      handler: async (args) => {
+        return await AppController.minimizeApp(args.app);
+      },
+    });
+
+    this.register({
+      definition: {
+        name: "restore_all_minimized",
+        displayName: "Restore All Minimized Windows",
+        description: "Restores all application windows that are currently minimized.",
+        category: "app",
+        safetyLevel: "SAFE",
+        parameters: [],
+      },
+      handler: async () => {
+        return await AppController.restoreAllMinimized();
+      },
+    });
+
+    this.register({
+      definition: {
+        name: "switch_previous_window",
+        displayName: "Switch to Previous Window",
+        description: "Switches to the previous active window in Z-order.",
+        category: "app",
+        safetyLevel: "SAFE",
+        parameters: [],
+      },
+      handler: async () => {
+        return await AppController.switchPreviousWindow();
+      },
+    });
+
     // 2. Keyboard Control Tools
     this.register({
       definition: {
@@ -423,6 +472,48 @@ export class ToolRegistry {
       },
       handler: async (args) => {
         return await SystemController.getRunningProcesses(args.type || "background");
+      },
+    });
+
+    this.register({
+      definition: {
+        name: "find_installed_app",
+        displayName: "Find Installed Application",
+        description: "Searches locally installed Windows software and Store apps for a query string.",
+        category: "system",
+        safetyLevel: "SAFE",
+        parameters: [
+          {
+            name: "query",
+            type: "string",
+            description: "Application name to search for (e.g. 'Google Chrome', 'Notepad').",
+            required: true,
+          },
+        ],
+      },
+      handler: async (args) => {
+        return await SystemController.findInstalledApp(args.query);
+      },
+    });
+
+    this.register({
+      definition: {
+        name: "find_process",
+        displayName: "Find Running Process",
+        description: "Searches currently running Windows processes for a process name or executable.",
+        category: "system",
+        safetyLevel: "SAFE",
+        parameters: [
+          {
+            name: "query",
+            type: "string",
+            description: "Process name or executable to search for (e.g. 'chrome.exe', 'notepad.exe').",
+            required: true,
+          },
+        ],
+      },
+      handler: async (args) => {
+        return await SystemController.findProcess(args.query);
       },
     });
 

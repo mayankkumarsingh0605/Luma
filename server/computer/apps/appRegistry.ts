@@ -115,6 +115,7 @@ const DEFAULT_APPS: AppDefinition[] = [
     category: "System",
     executableName: "explorer.exe",
     commandName: "explorer",
+    arguments: ["shell:MyComputerFolder"],
     standardPaths: [
       `${systemRoot}\\explorer.exe`,
     ],

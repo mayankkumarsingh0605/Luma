@@ -58,12 +58,25 @@ export class WorkflowEngine {
       case "FOCUS_APP": {
         const app = args.app || "chrome";
         const displayName = args.appDisplayName || app;
+        if (args.mode === "previous" || routed.toolToExecute === "switch_previous_window") {
+          return await executeAppControlWorkflow("previous", app, displayName, context);
+        }
         if (routed.toolToExecute === "switch_between_apps") {
           return await executeAppControlWorkflow("switch_between", app, displayName, context, {
             alternateApp: args.alternateApp,
           });
         }
         return await executeAppControlWorkflow("focus", app, displayName, context);
+      }
+
+      case "MINIMIZE_APP": {
+        const app = args.app || "chrome";
+        const displayName = args.appDisplayName || app;
+        return await executeAppControlWorkflow("minimize", app, displayName, context);
+      }
+
+      case "RESTORE_ALL_MINIMIZED": {
+        return await executeAppControlWorkflow("restore_all", "", "All Minimized Windows", context);
       }
 
       case "RESTORE_APP": {
@@ -383,22 +396,100 @@ export class WorkflowEngine {
         }
       }
 
-      case "GET_BACKGROUND_PROCESSES": {
-        context.onProgress("Scanning running background processes...", "in-progress");
+      case "FIND_INSTALLED_APP": {
+        const query = args.query || "";
+        context.onProgress(`Searching installed applications for "${query}"...`, "in-progress");
         try {
           let data: any;
           try {
             const res = await fetch("/api/computer/execute", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ tool: "get_running_processes", arguments: { type: "background" } }),
+              body: JSON.stringify({ tool: "find_installed_app", arguments: { query } }),
             });
             data = await res.json();
           } catch {
             if (typeof window === "undefined") {
               const modPath = "../../server/computer/tools/toolExecutor.js";
               const mod = await (Function("m", "return import(m)")(modPath));
-              data = await mod.ToolExecutor.executeTool("get_running_processes", { type: "background" });
+              data = await mod.ToolExecutor.executeTool("find_installed_app", { query });
+            } else {
+              throw new Error("Backend server unreachable.");
+            }
+          }
+
+          if (data.success && data.result) {
+            context.onProgress(data.result.message, "completed");
+            return {
+              success: true,
+              message: data.result.message,
+              data: data.result,
+            };
+          }
+          context.onProgress(`Search failed for "${query}"`, "failed");
+          return { success: false, message: `Could not search installed applications for "${query}".`, error: data.error };
+        } catch (err: any) {
+          context.onProgress("System communication error", "failed");
+          return { success: false, message: `Could not search installed applications for "${query}".`, error: err?.message };
+        }
+      }
+
+      case "FIND_PROCESS": {
+        const query = args.query || "";
+        context.onProgress(`Searching running processes for "${query}"...`, "in-progress");
+        try {
+          let data: any;
+          try {
+            const res = await fetch("/api/computer/execute", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ tool: "find_process", arguments: { query } }),
+            });
+            data = await res.json();
+          } catch {
+            if (typeof window === "undefined") {
+              const modPath = "../../server/computer/tools/toolExecutor.js";
+              const mod = await (Function("m", "return import(m)")(modPath));
+              data = await mod.ToolExecutor.executeTool("find_process", { query });
+            } else {
+              throw new Error("Backend server unreachable.");
+            }
+          }
+
+          if (data.success && data.result) {
+            context.onProgress(data.result.message, "completed");
+            return {
+              success: true,
+              message: data.result.message,
+              data: data.result,
+            };
+          }
+          context.onProgress(`Process search failed for "${query}"`, "failed");
+          return { success: false, message: `Could not search running processes for "${query}".`, error: data.error };
+        } catch (err: any) {
+          context.onProgress("System communication error", "failed");
+          return { success: false, message: `Could not search running processes for "${query}".`, error: err?.message };
+        }
+      }
+
+      case "GET_BACKGROUND_PROCESSES": {
+        const procFilter = args.type || "background";
+        const isAll = procFilter === "all" || args.includePids;
+        context.onProgress(isAll ? "Scanning running processes..." : "Scanning running background processes...", "in-progress");
+        try {
+          let data: any;
+          try {
+            const res = await fetch("/api/computer/execute", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ tool: "get_running_processes", arguments: { type: procFilter } }),
+            });
+            data = await res.json();
+          } catch {
+            if (typeof window === "undefined") {
+              const modPath = "../../server/computer/tools/toolExecutor.js";
+              const mod = await (Function("m", "return import(m)")(modPath));
+              data = await mod.ToolExecutor.executeTool("get_running_processes", { type: procFilter });
             } else {
               throw new Error("Backend server unreachable.");
             }
@@ -407,20 +498,22 @@ export class WorkflowEngine {
           if (data.success && Array.isArray(data.result)) {
             const procs: any[] = data.result;
             const lines: string[] = [];
-            lines.push(`Running background processes (${procs.length} total):`);
+            const header = isAll ? `Running processes with process IDs (${procs.length} total):` : `Running background processes (${procs.length} total):`;
+            lines.push(header);
             lines.push("");
             const displayLimit = Math.min(procs.length, 25);
             for (let i = 0; i < displayLimit; i++) {
               const p = procs[i];
               const mem = p.memoryMB ? `, ${p.memoryMB} MB` : "";
-              lines.push(`• ${p.name} (PID: ${p.pid}${mem}) [Background]`);
+              const tag = p.hasWindow ? "Visible Window" : "Background";
+              lines.push(`• ${p.name} (PID: ${p.pid}${mem}) [${tag}]`);
             }
             if (procs.length > displayLimit) {
-              lines.push(`... and ${procs.length - displayLimit} more background processes.`);
+              lines.push(`... and ${procs.length - displayLimit} more processes.`);
             }
 
             const formattedMsg = lines.join("\n");
-            context.onProgress(`Found ${procs.length} background processes`, "completed");
+            context.onProgress(`Found ${procs.length} processes`, "completed");
             return {
               success: true,
               message: formattedMsg,
@@ -431,11 +524,11 @@ export class WorkflowEngine {
             };
           }
 
-          context.onProgress("Failed to scan background processes", "failed");
-          return { success: false, message: "Could not retrieve background processes.", error: data.error };
+          context.onProgress("Failed to scan processes", "failed");
+          return { success: false, message: "Could not retrieve processes.", error: data.error };
         } catch (err: any) {
           context.onProgress("System communication error", "failed");
-          return { success: false, message: "Could not retrieve background processes.", error: err?.message };
+          return { success: false, message: "Could not retrieve processes.", error: err?.message };
         }
       }
 

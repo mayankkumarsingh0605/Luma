@@ -12,6 +12,7 @@ dist
 dist-ssr
 .chrome_profile
 *.local
+.luma_runtime.lock
 .env
 .env.*
 !.env.example

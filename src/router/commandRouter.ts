@@ -95,25 +95,25 @@ export function routeCommand(rawCommand: string, contextualTarget?: string): Rou
   const ytMatch = matchYouTubeIntent(normalizedCommand, rawCommand, effectiveTarget);
   if (ytMatch) return toRouted(ytMatch);
 
-  // A. Search Intent (e.g. "search Amazon for keyboards", "Amazon pe keyboard search karo")
-  const searchMatch = matchSearchIntent(normalizedCommand, rawCommand, effectiveTarget);
-  if (searchMatch) return toRouted(searchMatch);
-
-  // B. File & Folder Operations (e.g. "open downloads", "create folder called Luma", "delete report.pdf")
-  const fileMatch = matchFileIntent(normalizedCommand, rawCommand);
-  if (fileMatch) return toRouted(fileMatch);
-
-  // C. Media Controls (e.g. "play", "pause", "next", "volume up", "mute")
-  const mediaMatch = matchMediaIntent(normalizedCommand, rawCommand);
-  if (mediaMatch) return toRouted(mediaMatch);
-
-  // D. System & GUI Control (e.g. "take a screenshot", "what window is active", "copy", "paste")
+  // A. System & GUI Control (e.g. "what window is active", "find Chrome in installed apps", "find chrome.exe in processes", "take a screenshot")
   const systemMatch = matchSystemIntent(normalizedCommand, rawCommand);
   if (systemMatch) return toRouted(systemMatch);
 
-  // E. Application Control (e.g. "open Chrome", "Chrome kholo", "close Chrome", "switch to VS Code")
+  // B. Application Control (e.g. "open Chrome", "close Chrome", "switch to Notepad", "minimize Chrome", "restore Chrome")
   const appMatch = matchAppIntent(normalizedCommand, rawCommand);
   if (appMatch) return toRouted(appMatch);
+
+  // C. Search Intent (e.g. "search Amazon for keyboards", "Amazon pe keyboard search karo", "search Google for ...")
+  const searchMatch = matchSearchIntent(normalizedCommand, rawCommand, effectiveTarget);
+  if (searchMatch) return toRouted(searchMatch);
+
+  // D. File & Folder Operations (e.g. "open downloads", "create folder called Luma", "delete report.pdf")
+  const fileMatch = matchFileIntent(normalizedCommand, rawCommand);
+  if (fileMatch) return toRouted(fileMatch);
+
+  // E. Media Controls (e.g. "play", "pause", "next", "volume up", "mute")
+  const mediaMatch = matchMediaIntent(normalizedCommand, rawCommand);
+  if (mediaMatch) return toRouted(mediaMatch);
 
   // F. Website Navigation (e.g. "open YouTube", "open Amazon", "go to Google", "YT kholo")
   const websiteMatch = matchWebsiteIntent(normalizedCommand, rawCommand);

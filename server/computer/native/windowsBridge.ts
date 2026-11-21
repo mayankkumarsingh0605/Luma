@@ -535,4 +535,91 @@ $success = $wshell.AppActivate($target)
       return { success: false, error: err?.message || "Failed to close window." };
     }
   }
+
+  /**
+   * Minimizes an application window using Win32 SW_MINIMIZE.
+   */
+  static async minimizeWindow(
+    titleOrProcessOrHwnd: string
+  ): Promise<{ success: boolean; hwnd?: number; title?: string; processName?: string; message?: string; error?: string }> {
+    try {
+      const res = await this.runScriptFile<{
+        success: boolean;
+        hwnd?: number;
+        title?: string;
+        processName?: string;
+        message?: string;
+        error?: string;
+      }>(WINDOW_MANAGER_SCRIPT, ["-Action", "minimize", "-Target", titleOrProcessOrHwnd]);
+      return res;
+    } catch (err: any) {
+      return { success: false, error: err?.message || "Failed to minimize window." };
+    }
+  }
+
+  /**
+   * Restores an application window using Win32 SW_RESTORE.
+   */
+  static async restoreWindow(
+    titleOrProcessOrHwnd: string
+  ): Promise<{ success: boolean; hwnd?: number; title?: string; processName?: string; message?: string; error?: string }> {
+    try {
+      const res = await this.runScriptFile<{
+        success: boolean;
+        hwnd?: number;
+        title?: string;
+        processName?: string;
+        message?: string;
+        error?: string;
+      }>(WINDOW_MANAGER_SCRIPT, ["-Action", "restore", "-Target", titleOrProcessOrHwnd]);
+      return res;
+    } catch (err: any) {
+      return { success: false, error: err?.message || "Failed to restore window." };
+    }
+  }
+
+  /**
+   * Restores all minimized application windows using Win32 SW_RESTORE.
+   */
+  static async restoreAllMinimized(): Promise<{
+    success: boolean;
+    count: number;
+    restored: string[];
+    message: string;
+    error?: string;
+  }> {
+    try {
+      const res = await this.runScriptFile<{
+        success: boolean;
+        count: number;
+        restored: string[];
+        message: string;
+        error?: string;
+      }>(WINDOW_MANAGER_SCRIPT, ["-Action", "restore_all"]);
+      return res;
+    } catch (err: any) {
+      return {
+        success: false,
+        count: 0,
+        restored: [],
+        message: "Failed to restore all minimized windows.",
+        error: err?.message,
+      };
+    }
+  }
+
+  /**
+   * Switches to the previous active window in Z-order.
+   */
+  static async switchPreviousWindow(): Promise<FocusWindowResult> {
+    try {
+      const res = await this.runScriptFile<FocusWindowResult>(WINDOW_MANAGER_SCRIPT, [
+        "-Action",
+        "previous",
+      ]);
+      return res;
+    } catch (err: any) {
+      return { success: false, error: err?.message || "Failed to switch to previous window." };
+    }
+  }
 }

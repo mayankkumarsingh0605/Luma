@@ -7,7 +7,7 @@ import type { WorkflowContext, WorkflowResult } from "./types.js";
  * Deterministic Windows Application Control Workflow (Open, Close, Focus, Restore, Switch)
  */
 export async function executeAppControlWorkflow(
-  action: "open" | "close" | "focus" | "restore" | "switch_between",
+  action: "open" | "close" | "focus" | "restore" | "switch_between" | "minimize" | "restore_all" | "previous",
   appCanonical: string,
   appDisplayName: string,
   context: WorkflowContext,
@@ -20,6 +20,12 @@ export async function executeAppControlWorkflow(
       ? "Closing"
       : action === "restore"
       ? "Restoring"
+      : action === "restore_all"
+      ? "Restoring all"
+      : action === "minimize"
+      ? "Minimizing"
+      : action === "previous"
+      ? "Switching to previous window"
       : action === "switch_between"
       ? "Switching between windows of"
       : "Switching to";
@@ -53,6 +59,15 @@ export async function executeAppControlWorkflow(
     } else if (action === "restore") {
       tool = "restore_app";
       args = { app: appCanonical };
+    } else if (action === "minimize") {
+      tool = "minimize_app";
+      args = { app: appCanonical };
+    } else if (action === "restore_all") {
+      tool = "restore_all_minimized";
+      args = {};
+    } else if (action === "previous") {
+      tool = "switch_previous_window";
+      args = {};
     } else if (action === "switch_between") {
       tool = "switch_between_apps";
       args = { app: appCanonical, alternateApp: extraArgs?.alternateApp || "notepad" };
@@ -146,6 +161,71 @@ export async function executeAppControlWorkflow(
       ComputerStateManager.update({
         active_app: appCanonical,
         last_action: `Restored ${appDisplayName}`,
+        last_action_status: "success",
+      });
+      return {
+        success: true,
+        message: successMsg,
+        data: data.result,
+      };
+    } else if (action === "minimize") {
+      if (!data.success || !data.result?.success) {
+        const errorMsg = data.result?.message || data.result?.error || data.error || `Could not minimize ${appDisplayName}.`;
+        context.onProgress(errorMsg, "failed");
+        return {
+          success: false,
+          message: errorMsg,
+          error: data.result?.error || data.error,
+        };
+      }
+
+      const successMsg = data.result?.message || `Minimized ${appDisplayName} window.`;
+      context.onProgress(successMsg, "completed");
+      ComputerStateManager.update({
+        active_app: appCanonical,
+        last_action: `Minimized ${appDisplayName}`,
+        last_action_status: "success",
+      });
+      return {
+        success: true,
+        message: successMsg,
+        data: data.result,
+      };
+    } else if (action === "restore_all") {
+      if (!data.success || !data.result?.success) {
+        const errorMsg = data.result?.message || data.result?.error || data.error || `Could not restore minimized windows.`;
+        context.onProgress(errorMsg, "failed");
+        return {
+          success: false,
+          message: errorMsg,
+          error: data.result?.error || data.error,
+        };
+      }
+
+      const successMsg = data.result?.message || `Restored all minimized windows.`;
+      context.onProgress(successMsg, "completed");
+      return {
+        success: true,
+        message: successMsg,
+        data: data.result,
+      };
+    } else if (action === "previous") {
+      if (!data.success || !data.result?.success) {
+        const errorMsg = data.result?.message || data.result?.error || data.error || `Could not switch to previous window.`;
+        context.onProgress(errorMsg, "failed");
+        return {
+          success: false,
+          message: errorMsg,
+          error: data.result?.error || data.error,
+        };
+      }
+
+      const successMsg = data.result?.message || `Switched to previous window: ${data.result?.title || "Window"}.`;
+      context.onProgress(successMsg, "completed");
+      ComputerStateManager.update({
+        active_app: data.result?.processName || appCanonical,
+        active_window: data.result?.title || "",
+        last_action: "Switched to previous window",
         last_action_status: "success",
       });
       return {

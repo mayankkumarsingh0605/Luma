@@ -75,14 +75,17 @@ export class SystemController {
     }
 
     const clean = processName.endsWith(".exe") ? processName : `${processName}.exe`;
+    const cleanProc = clean.replace(/\.exe$/i, "");
     try {
-      const { stdout } = await execAsync(`tasklist /FI "IMAGENAME eq ${clean}" /FO CSV /NH`);
-      const lines = stdout.split(/\r?\n/).filter((l) => l.toLowerCase().includes(clean.toLowerCase()));
+      const res = await WindowsBridge.runPowerShell(
+        `@(Get-Process -Name "${cleanProc}" -ErrorAction SilentlyContinue).Count`
+      );
+      const count = parseInt(res.trim(), 10) || 0;
 
       return {
-        isRunning: lines.length > 0,
+        isRunning: count > 0,
         processName: clean,
-        count: lines.length,
+        count,
       };
     } catch {
       return {
@@ -107,6 +110,76 @@ export class SystemController {
    */
   static async getInstalledApps(): Promise<InstalledAppItem[]> {
     return await WindowsBridge.getInstalledApplications();
+  }
+
+  /**
+   * Searches installed applications for a matching application name or publisher.
+   */
+  static async findInstalledApp(query: string): Promise<{
+    found: boolean;
+    query: string;
+    matches: InstalledAppItem[];
+    message: string;
+  }> {
+    const apps = await WindowsBridge.getInstalledApplications();
+    const qLower = query.toLowerCase().trim();
+    const matches = apps.filter((a) => {
+      const name = (a.displayName || a.name || "").toLowerCase();
+      const pub = (a.publisher || "").toLowerCase();
+      return name.includes(qLower) || pub.includes(qLower);
+    });
+
+    if (matches.length > 0) {
+      const best = matches[0];
+      const ver = best.version ? ` (v${best.version})` : "";
+      const pub = best.publisher ? ` by ${best.publisher}` : "";
+      const msg = `Found installed application: ${best.displayName}${ver}${pub} [${best.type}].`;
+      return { found: true, query, matches, message: msg };
+    }
+
+    return {
+      found: false,
+      query,
+      matches: [],
+      message: `No installed application found matching "${query}".`,
+    };
+  }
+
+  /**
+   * Searches running processes for a process name or executable.
+   */
+  static async findProcess(query: string): Promise<{
+    found: boolean;
+    query: string;
+    matches: RunningProcessItem[];
+    message: string;
+  }> {
+    const procs = await WindowsBridge.getRunningProcesses("all");
+    const qLower = query.toLowerCase().trim();
+    const qClean = qLower.replace(/\.exe$/i, "");
+
+    const matches = procs.filter((p) => {
+      const pName = p.name.toLowerCase();
+      const pClean = pName.replace(/\.exe$/i, "");
+      return pClean === qClean || pName === qLower || pClean.includes(qClean);
+    });
+
+    if (matches.length > 0) {
+      const lines = matches.map((m) => {
+        const type = m.hasWindow ? "Visible Window" : "Background";
+        const mem = m.memoryMB ? `, Memory: ${m.memoryMB} MB` : "";
+        return `• ${m.name} (PID: ${m.pid}${mem}) [${type}]`;
+      });
+      const msg = `Found ${matches.length} running process(es) matching "${query}":\n` + lines.join("\n");
+      return { found: true, query, matches, message: msg };
+    }
+
+    return {
+      found: false,
+      query,
+      matches: [],
+      message: `No running process found matching "${query}".`,
+    };
   }
 
   /**

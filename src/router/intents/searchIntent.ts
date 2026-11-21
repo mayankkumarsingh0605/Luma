@@ -53,6 +53,12 @@ export function matchSearchIntent(normalizedText: string, rawText: string, conte
   const text = normalizedText.trim();
   const raw = rawText.trim();
 
+  // Local system / desktop queries must NEVER be hijacked by web search!
+  const isLocalSystemQuery = /\b(?:installed\s+apps?|installed\s+applications?|installed\s+software|installed\s+programs?|running\s+processes?|background\s+processes?|running\s+background|active\s+window|visible\s+windows?|open\s+windows?|foreground\s+window)\b/i.test(text);
+  if (isLocalSystemQuery) {
+    return null;
+  }
+
   // Pattern 1: "search <target>" with NO search query where target is a registered website
   // Prevents the website name from becoming the search query!
   // e.g. "search YouTube" -> target="youtube", query=null, intent="OPEN_OR_SEARCH_WEBSITE"
@@ -132,7 +138,7 @@ export function matchSearchIntent(normalizedText: string, rawText: string, conte
   // Pattern 10: Generalized search: "search for <query>" or "search <query>"
   // CRITICAL RULE: When no website is specified (e.g. "Search Python tutorials"),
   // defaults to Google (general web search) unless a context target was provided by a compound workflow.
-  const generalSearchMatch = text.match(/^(?:search|find)\s+(?:for\s+)?(.+)$/i);
+  const generalSearchMatch = text.match(/^search\s+(?:for\s+)?(.+)$/i);
   if (generalSearchMatch) {
     const query = generalSearchMatch[1].trim();
     const defaultSite = contextualTarget || "google";

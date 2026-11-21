@@ -1,20 +1,67 @@
 import { resolveAppAlias } from "../appAliasRegistry.js";
+import { ComputerStateManager } from "../../state/computerState.js";
 import type { IntentMatchResult } from "./types.js";
 
 /**
- * Evaluates application control intents (OPEN_APP, CLOSE_APP, FOCUS_APP).
+ * Evaluates application control intents (OPEN_APP, CLOSE_APP, FOCUS_APP, MINIMIZE_APP, RESTORE_APP).
  */
 export function matchAppIntent(normalizedText: string, rawText: string): IntentMatchResult | null {
   const text = normalizedText.trim();
   const raw = rawText.trim();
 
-  // 0. RESTORE_APP patterns: "restore chrome if it is minimized", "restore chrome", "unminimize chrome"
+  // -3. SWITCH_PREVIOUS_WINDOW: "switch to the previous window", "switch to previous window", "switch to previous app"
+  if (
+    /^(?:switch\s+to\s+(?:the\s+)?previous\s+window|switch\s+to\s+previous\s+app|switch\s+back|go\s+back\s+to\s+previous\s+window)$/i.test(
+      text
+    )
+  ) {
+    return {
+      matched: true,
+      intent: "FOCUS_APP",
+      ruleName: "RULE_SWITCH_PREVIOUS_WINDOW",
+      arguments: { mode: "previous" },
+      toolToExecute: "switch_previous_window",
+    };
+  }
+
+  // -2. RESTORE_ALL_MINIMIZED: "restore all minimized application windows", "restore all minimized windows"
+  if (/^(?:restore|unminimize)\s+all\s+(?:minimized\s+)?(?:application\s+)?windows$/i.test(text)) {
+    return {
+      matched: true,
+      intent: "RESTORE_ALL_MINIMIZED",
+      ruleName: "RULE_RESTORE_ALL_MINIMIZED",
+      arguments: {},
+      toolToExecute: "restore_all_minimized",
+    };
+  }
+
+  // -1. MINIMIZE_APP: "minimize chrome", "minimize notepad"
+  const minimizeMatch = text.match(/^minimize\s+(.+)$/i);
+  if (minimizeMatch) {
+    const rawTarget = minimizeMatch[1].trim();
+    const cleanTarget = rawTarget.replace(/\s+(window|app|application)$/i, "").trim();
+    const resolved = resolveAppAlias(cleanTarget) || resolveAppAlias(rawTarget);
+    const appCanonical = resolved ? resolved.canonical : cleanTarget;
+    const appDisplayName = resolved ? resolved.displayName : cleanTarget;
+    return {
+      matched: true,
+      intent: "MINIMIZE_APP",
+      ruleName: "RULE_MINIMIZE_APP",
+      arguments: { app: appCanonical, appDisplayName, windowTarget: rawTarget },
+      toolToExecute: "minimize_app",
+    };
+  }
+
+  // 0. RESTORE_APP patterns: "restore chrome if it is minimized", "restore chrome", "unminimize chrome", "restore it"
   const restoreMatch =
     text.match(/^(?:restore|unminimize)\s+(.+?)(?:\s+if\s+it\s+is\s+minimized)?$/i) ||
     text.match(/^if\s+(.+?)\s+is\s+minimized\s*,?\s*(?:restore|unminimize)\s+(?:it)?$/i);
   if (restoreMatch) {
     const rawTarget = restoreMatch[1].trim();
-    const cleanTarget = rawTarget.replace(/\s+(window|app|application)$/i, "").trim();
+    let cleanTarget = rawTarget.replace(/\s+(window|app|application)$/i, "").trim();
+    if (["it", "that", "this"].includes(cleanTarget.toLowerCase())) {
+      cleanTarget = ComputerStateManager.getState().active_app || "notepad";
+    }
     const resolved = resolveAppAlias(cleanTarget) || resolveAppAlias(rawTarget);
     const appCanonical = resolved ? resolved.canonical : cleanTarget;
     const appDisplayName = resolved ? resolved.displayName : cleanTarget;

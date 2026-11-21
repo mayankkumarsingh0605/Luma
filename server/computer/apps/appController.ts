@@ -44,13 +44,44 @@ export class AppController {
     const target = await AppRegistry.resolveLaunchTarget(app);
     const launchArgs = [...(app.arguments || []), ...additionalArgs];
 
+    // Reuse existing window if application is already running (e.g. Chrome, Notepad)
+    const initialRunning = await this.isAppRunning(appName);
+    if (initialRunning.isRunning) {
+      try {
+        const visibleWindows = await WindowsBridge.getVisibleWindows();
+        const expectedTokens = [
+          app.displayName.toLowerCase(),
+          app.name.toLowerCase(),
+          app.executableName.replace(".exe", "").toLowerCase(),
+        ];
+        const existingWindow = visibleWindows.find((w) => {
+          const tLower = w.title.toLowerCase();
+          const pLower = w.processName.toLowerCase();
+          return expectedTokens.some((tok) => tok && (tLower.includes(tok) || pLower.includes(tok)));
+        });
+
+        if (existingWindow) {
+          await WindowsBridge.focusWindow(String(existingWindow.hwnd));
+          return {
+            message: `${app.displayName} is already running. Switched to existing window.`,
+            app,
+            launchTarget: target.target,
+            verified: true,
+            window: existingWindow,
+          };
+        }
+      } catch {
+        // Fall through to standard launch if search fails
+      }
+    }
+
     try {
       if (target.type === "protocol") {
         // Launch protocol URL (e.g. ms-paint:, ms-clock:, calculator:)
         const child = spawn("cmd.exe", ["/c", "start", "", target.target], {
           detached: true,
           stdio: "ignore",
-          windowsHide: true,
+          windowsHide: false,
         });
         child.unref();
       } else if (target.type === "aumid") {
@@ -58,7 +89,7 @@ export class AppController {
         const child = spawn("cmd.exe", ["/c", "start", "", target.target], {
           detached: true,
           stdio: "ignore",
-          windowsHide: true,
+          windowsHide: false,
         });
         child.unref();
       } else if (target.type === "file") {
@@ -74,7 +105,7 @@ export class AppController {
         const child = spawn("cmd.exe", ["/c", "start", "", target.target, ...launchArgs], {
           detached: true,
           stdio: "ignore",
-          windowsHide: true,
+          windowsHide: false,
         });
         child.unref();
       }
@@ -84,7 +115,7 @@ export class AppController {
       );
     }
 
-    // Launch Verification: Poll visible windows for up to 3500ms
+    // Launch Verification: Poll visible windows for up to 5000ms
     const expectedTokens = [
       app.displayName.toLowerCase(),
       app.name.toLowerCase(),
@@ -93,7 +124,7 @@ export class AppController {
     ];
 
     let verifiedWindow: VisibleWindow | undefined;
-    const maxPollMs = 3500;
+    const maxPollMs = 5000;
     const pollIntervalMs = 350;
     const startTime = Date.now();
 
@@ -233,8 +264,11 @@ export class AppController {
     const procName = app ? app.executableName : (appName.endsWith(".exe") ? appName : `${appName}.exe`);
 
     try {
-      const { stdout } = await execAsync(`tasklist /FI "IMAGENAME eq ${procName}" /NH /FO CSV`);
-      const isRunning = stdout.toLowerCase().includes(procName.toLowerCase());
+      const cleanProc = procName.replace(/\.exe$/i, "");
+      const res = await WindowsBridge.runPowerShell(
+        `Get-Process -Name "${cleanProc}" -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty Id`
+      );
+      const isRunning = Boolean(res && res.trim().length > 0 && !isNaN(Number(res.trim())));
 
       return {
         isRunning,
@@ -393,5 +427,83 @@ export class AppController {
    */
   static async getInstalledApps(): Promise<InstalledAppItem[]> {
     return await AppDiscovery.getInstalledApplications();
+  }
+
+  /**
+   * Minimizes an application window.
+   */
+  static async minimizeApp(appName: string): Promise<{
+    success: boolean;
+    message: string;
+    window?: { hwnd: number; title: string; processName: string };
+    error?: string;
+  }> {
+    if (!appName) {
+      return { success: false, message: "Application name is required." };
+    }
+
+    const app = await AppRegistry.findAppAsync(appName);
+    const target = app ? app.displayName : appName;
+    const res = await WindowsBridge.minimizeWindow(target);
+    if (res.success) {
+      return {
+        success: true,
+        message: res.message || `Minimized ${res.title || target} window.`,
+        window: res.hwnd
+          ? { hwnd: res.hwnd, title: res.title || target, processName: res.processName || "" }
+          : undefined,
+      };
+    }
+    return {
+      success: false,
+      message: res.error || `Could not minimize window for ${target}.`,
+      error: res.error,
+    };
+  }
+
+  /**
+   * Restores all minimized application windows.
+   */
+  static async restoreAllMinimized(): Promise<{
+    success: boolean;
+    message: string;
+    count: number;
+    restored: string[];
+    error?: string;
+  }> {
+    const res = await WindowsBridge.restoreAllMinimized();
+    return {
+      success: res.success,
+      message: res.message || `Restored ${res.count} minimized windows.`,
+      count: res.count,
+      restored: res.restored,
+      error: res.error,
+    };
+  }
+
+  /**
+   * Switches to the previous active window in Z-order.
+   */
+  static async switchPreviousWindow(): Promise<{
+    success: boolean;
+    message: string;
+    window?: { hwnd: number; title: string; processName: string };
+    error?: string;
+  }> {
+    const res = await WindowsBridge.switchPreviousWindow();
+    if (res.success) {
+      return {
+        success: true,
+        message: res.message || `Switched to previous window: ${res.title || "Window"}.`,
+        window: res.hwnd
+          ? { hwnd: res.hwnd, title: res.title || "", processName: res.processName || "" }
+          : undefined,
+      };
+    }
+    return {
+      success: false,
+      message: res.error || "Could not switch to previous window.",
+      error: res.error,
+    };
   }
 }
