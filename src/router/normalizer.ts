@@ -1,0 +1,76 @@
+/**
+ * LUMA Command Normalizer (Extended for General Desktop Agent)
+ *
+ * Standardizes natural language input across English and Hindi/Hinglish.
+ * Strictly deterministic — no LLM calls.
+ */
+
+/**
+ * Standardizes text: lowercase, punctuation removal, whitespace collapse.
+ */
+export function basicNormalize(rawText: string): string {
+  if (!rawText || typeof rawText !== "string") {
+    return "";
+  }
+
+  return rawText
+    .toLowerCase()
+    .trim()
+    .replace(/[!?,;:"'`~*^]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/**
+ * Normalizes common Hindi/Hinglish action phrasing to canonical English forms
+ * while preserving query contents.
+ */
+export function normalizeCommand(rawText: string): string {
+  let text = basicNormalize(rawText);
+  if (!text) return "";
+
+  // Common Hindi/Hinglish verbal standardizations
+  // e.g., "khol do" / "kholo" / "kholna" -> "open"
+  text = text
+    .replace(/\b(?:khol\s*do|khol\s*de|kholiye|kholna|kholo|khol)\b/gi, "open")
+    .replace(/\b(?:start\s*karo|start\s*kardo|start\s*kar\s*do)\b/gi, "open")
+    .replace(/\b(?:launch\s*karo|launch\s*kardo|chalao|chala\s*do)\b/gi, "open")
+    .replace(/\b(?:band\s*karo|band\s*kar\s*do|band\s*kardo|band\s*kijiye|band)\b/gi, "close")
+    .replace(/\b(?:hatao|hata\s*do)\b/gi, "close")
+    .replace(/\b(?:search\s*karo|search\s*kro|search\s*karna|search\s*kardo|dhundo|dhundho|khojo)\b/gi, "search")
+    .replace(/\b(?:likho|likh\s*do|likhna|type\s*karo|type\s*kardo)\b/gi, "type")
+    .replace(/\b(?:dabao|daba\s*do|press\s*karo|press\s*kardo)\b/gi, "press")
+    .replace(/\b(?:rok\s*do|roko|pause\s*karo)\b/gi, "pause")
+    .replace(/\b(?:bajao|play\s*karo|chalao)\b/gi, "play");
+
+  return text.replace(/\s+/g, " ").trim();
+}
+
+/**
+ * Splits a compound multi-step instruction into ordered sub-commands.
+ * Examples:
+ * - "Open Chrome and search Amazon for keyboards" -> ["open chrome", "search amazon for keyboards"]
+ * - "Chrome kholo aur Amazon pe keyboard search karo" -> ["chrome open", "amazon pe keyboard search"]
+ * - "Open VS Code and create a new file" -> ["open vs code", "create a new file"]
+ */
+export function splitCompoundCommand(rawText: string): string[] {
+  if (!rawText || typeof rawText !== "string") return [];
+
+  const normalized = basicNormalize(rawText);
+
+  // Conjunction split regex: and, aur, then, phir, fir, uske baad
+  const conjunctionRegex = /\s+(?:and\s+then|and|aur|then|phir|fir|uske\s+baad)\s+/i;
+
+  if (conjunctionRegex.test(normalized)) {
+    const parts = normalized
+      .split(conjunctionRegex)
+      .map((p) => p.trim())
+      .filter((p) => p.length > 0);
+
+    if (parts.length > 1) {
+      return parts;
+    }
+  }
+
+  return [normalized];
+}

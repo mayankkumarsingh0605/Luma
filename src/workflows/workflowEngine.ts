@@ -1,0 +1,348 @@
+import type { RoutedCommand } from "../router/commandRouter.js";
+import type { WorkflowContext, WorkflowResult } from "./types.js";
+import { executeBrowserSearchWorkflow } from "./browserSearchWorkflow.js";
+import { executeWebsiteOpenWorkflow } from "./websiteOpenWorkflow.js";
+import { executeAppControlWorkflow } from "./appControlWorkflow.js";
+import { executeFileWorkflow } from "./fileWorkflow.js";
+import { executeMediaWorkflow } from "./mediaWorkflow.js";
+import { executeCompoundWorkflow } from "./compoundWorkflow.js";
+import { ConfirmationManager } from "../confirmation/confirmationManager.js";
+import { ComputerStateManager } from "../state/computerState.js";
+
+/**
+ * LUMA Workflow Engine
+ *
+ * Central dispatcher that executes user-level intents by selecting, planning,
+ * verifying, and coordinating deterministic workflows and tool calls.
+ */
+export class WorkflowEngine {
+  static async execute(routed: RoutedCommand, context: WorkflowContext): Promise<WorkflowResult> {
+    const { intent, arguments: args } = routed;
+
+    switch (intent) {
+      // 1. Web & Product Search Workflows
+      case "SEARCH":
+      case "OPEN_OR_SEARCH_WEBSITE":
+      case "SEARCH_PRODUCT":
+      case "SEARCH_WEB": {
+        const target = args.target || args.site || "google";
+        const siteName = args.siteDisplayName || target.toUpperCase();
+        const query = args.query ?? null;
+        const searchUrl = args.searchUrl;
+
+        return await executeBrowserSearchWorkflow(target, siteName, query, searchUrl, context);
+      }
+
+      // 2. Website Open Workflow
+      case "OPEN_WEBSITE": {
+        const url = args.url || "https://www.google.com";
+        const displayName = args.displayName || "Website";
+
+        return await executeWebsiteOpenWorkflow(url, displayName, context);
+      }
+
+      // 3. Application Control Workflows
+      case "OPEN_APP": {
+        const app = args.app || "chrome";
+        const displayName = args.appDisplayName || app;
+        return await executeAppControlWorkflow("open", app, displayName, context);
+      }
+
+      case "CLOSE_APP": {
+        const app = args.app || "chrome";
+        const displayName = args.appDisplayName || app;
+        return await executeAppControlWorkflow("close", app, displayName, context);
+      }
+
+      case "FOCUS_APP": {
+        const app = args.app || "chrome";
+        const displayName = args.appDisplayName || app;
+        return await executeAppControlWorkflow("focus", app, displayName, context);
+      }
+
+      // 4. File & Folder Operations Workflows
+      case "OPEN_FOLDER": {
+        const path = args.path || args.folder || "downloads";
+        return await executeFileWorkflow("open_folder", path, context);
+      }
+
+      case "OPEN_FILE": {
+        const path = args.path || "";
+        return await executeFileWorkflow("open_file", path, context);
+      }
+
+      case "CREATE_FOLDER": {
+        const folder = args.folder || "New Folder";
+        return await executeFileWorkflow("create_folder", folder, context);
+      }
+
+      case "DELETE": {
+        const target = args.target || "";
+        return await executeFileWorkflow("delete", target, context, false);
+      }
+
+      // 5. Confirmation Gates
+      case "CONFIRM_ACTION": {
+        context.onProgress("Processing confirmation...", "in-progress");
+        const res = await ConfirmationManager.executePending();
+        context.onProgress(res.message, res.success ? "completed" : "failed");
+        return res;
+      }
+
+      case "CANCEL_ACTION": {
+        const res = ConfirmationManager.cancelPending();
+        context.onProgress(res.message, "completed");
+        return res;
+      }
+
+      // 6. Multi-Step Compound Goals
+      case "COMPOUND_GOAL": {
+        const subCommands = routed.subCommands || [];
+        return await executeCompoundWorkflow(subCommands, context);
+      }
+
+      // 7. Media Controls
+      case "PLAY_MEDIA":
+      case "PAUSE_MEDIA":
+      case "RESUME_MEDIA":
+      case "STOP_MEDIA":
+      case "NEXT_MEDIA":
+      case "PREV_MEDIA":
+      case "VOLUME_UP":
+      case "VOLUME_DOWN":
+      case "MUTE_MEDIA": {
+        const action = args.action || intent.toLowerCase().replace("_media", "");
+        return await executeMediaWorkflow(action, context);
+      }
+
+      // 8. System Inspection & Tools
+      case "INSPECT_COMPUTER": {
+        context.onProgress("Observing computer state...", "in-progress");
+        try {
+          const res = await fetch("/api/computer/execute", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ tool: "observe_computer_state", arguments: {} }),
+          });
+          const data = await res.json();
+          if (data.success && data.result) {
+            const obs = data.result;
+            const win = obs.windows || {};
+            const browser = obs.browser || {};
+            const screen = obs.screen || {};
+
+            const activeApp = win.active_window || "None";
+            const proc = win.process_name || "None";
+            const chromeRunning = browser.running ? "Yes" : "No";
+            const browserConn = browser.connected ? "Connected" : "Unavailable";
+            const currentUrl = browser.current_url || "Unknown";
+            const pageTitle = browser.page_title || "Unknown";
+            const pageStatus = browser.page_status || "UNAVAILABLE";
+            const screenDim = screen.width && screen.height ? `${screen.width} x ${screen.height}` : "Unavailable";
+            const screenshot = screen.screenshot_available ? "Available" : "Unavailable";
+            const obsStatus = obs.observation_status || "PARTIAL";
+
+            const lines = [
+              "COMPUTER OBSERVATION",
+              "",
+              `Active application: ${activeApp}`,
+              `Process: ${proc}`,
+              `Chrome running: ${chromeRunning}`,
+              `Browser connection: ${browserConn}`,
+              `Current URL: ${currentUrl}`,
+              `Page title: ${pageTitle}`,
+              `Page status: ${pageStatus}`,
+              `Screen: ${screenDim}`,
+              `Screenshot: ${screenshot}`,
+              "",
+              `Observation status: ${obsStatus}`,
+            ];
+
+            const formattedMessage = lines.join("\n");
+            context.onProgress("Computer state observed", "completed");
+
+            return {
+              success: true,
+              message: formattedMessage,
+              data: obs,
+            };
+          }
+
+          context.onProgress("Failed to observe computer state", "failed");
+          return { success: false, message: "Could not observe computer state.", error: data.error };
+        } catch (err: any) {
+          context.onProgress("Observation communication error", "failed");
+          return { success: false, message: "Could not observe computer state.", error: err?.message };
+        }
+      }
+
+      case "TAKE_SCREENSHOT": {
+        context.onProgress("Capturing screenshot...", "in-progress");
+        try {
+          const res = await fetch("/api/computer/execute", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ tool: "take_screenshot", arguments: {} }),
+          });
+          const data = await res.json();
+          if (data.success) {
+            context.onProgress("Screenshot captured successfully", "completed");
+            return { success: true, message: "Screenshot captured successfully.", data: data.result };
+          }
+          context.onProgress("Failed to capture screenshot", "failed");
+          return { success: false, message: "Could not capture screenshot.", error: data.error };
+        } catch (err: any) {
+          context.onProgress("System communication error", "failed");
+          return { success: false, message: "Could not capture screenshot.", error: err?.message };
+        }
+      }
+
+      case "GET_ACTIVE_WINDOW": {
+        context.onProgress("Inspecting active window...", "in-progress");
+        try {
+          const res = await fetch("/api/computer/execute", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ tool: "get_active_window", arguments: {} }),
+          });
+          const data = await res.json();
+          if (data.success && data.result) {
+            const title = data.result.title || "Desktop";
+            const proc = data.result.processName || "System";
+            const msg = `Active window: "${title}" (${proc}).`;
+            context.onProgress(msg, "completed");
+            ComputerStateManager.update({ active_window: title, active_app: proc });
+            return { success: true, message: msg, data: data.result };
+          }
+          context.onProgress("Failed to inspect active window", "failed");
+          return { success: false, message: "Could not read active window.", error: data.error };
+        } catch (err: any) {
+          context.onProgress("System communication error", "failed");
+          return { success: false, message: "Could not read active window.", error: err?.message };
+        }
+      }
+
+      case "CHECK_SYSTEM": {
+        context.onProgress("Checking system information...", "in-progress");
+        try {
+          const res = await fetch("/api/computer/execute", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ tool: "get_os_info", arguments: {} }),
+          });
+          const data = await res.json();
+          if (data.success && data.result) {
+            const { platform, osRelease, arch, hostname } = data.result;
+            const msg = `System Info: ${platform} ${osRelease} (${arch}) on ${hostname}.`;
+            context.onProgress(msg, "completed");
+            return { success: true, message: msg, data: data.result };
+          }
+          context.onProgress("Could not retrieve system information", "failed");
+          return { success: false, message: "Could not retrieve system details.", error: data.error };
+        } catch (err: any) {
+          context.onProgress("System communication error", "failed");
+          return { success: false, message: "Could not retrieve system details.", error: err?.message };
+        }
+      }
+
+      // 9. Hotkeys & Standard Editing
+      case "COPY":
+      case "PASTE":
+      case "SELECT": {
+        const keys = args.keys || ["ctrl", "c"];
+        const label = intent === "COPY" ? "Copied" : intent === "PASTE" ? "Pasted" : "Selected all";
+        context.onProgress(`Executing ${label.toLowerCase()}...`, "in-progress");
+
+        try {
+          const res = await fetch("/api/computer/execute", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ tool: "hotkey", arguments: { keys } }),
+          });
+          const data = await res.json();
+          if (data.success) {
+            context.onProgress(`${label} successfully`, "completed");
+            return { success: true, message: `${label} successfully.` };
+          }
+          context.onProgress(`Failed to execute ${label.toLowerCase()}`, "failed");
+          return { success: false, message: `Could not execute ${label.toLowerCase()}.`, error: data.error };
+        } catch (err: any) {
+          context.onProgress("System communication error", "failed");
+          return { success: false, message: `Could not execute ${label.toLowerCase()}.`, error: err?.message };
+        }
+      }
+
+      case "SCROLL": {
+        const amount = args.amount ?? -3;
+        const dir = amount > 0 ? "up" : "down";
+        context.onProgress(`Scrolling ${dir}...`, "in-progress");
+
+        try {
+          const res = await fetch("/api/computer/execute", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ tool: "scroll", arguments: { amount } }),
+          });
+          const data = await res.json();
+          if (data.success) {
+            context.onProgress(`Scrolled ${dir}`, "completed");
+            return { success: true, message: `Scrolled page ${dir}.` };
+          }
+          return { success: false, message: "Could not scroll page.", error: data.error };
+        } catch (err: any) {
+          return { success: false, message: "Could not scroll page.", error: err?.message };
+        }
+      }
+
+      // 10. Low-level Keyboard & Text typing
+      case "TYPE_TEXT": {
+        const text = args.text || "";
+        context.onProgress(`Typing text...`, "in-progress");
+        try {
+          const res = await fetch("/api/computer/execute", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ tool: "type_text", arguments: { text } }),
+          });
+          const data = await res.json();
+          if (data.success) {
+            context.onProgress(`Typed text successfully`, "completed");
+            return { success: true, message: `Typed text successfully.` };
+          }
+          return { success: false, message: "Could not type text.", error: data.error };
+        } catch (err: any) {
+          return { success: false, message: "Could not type text.", error: err?.message };
+        }
+      }
+
+      case "PRESS_KEY": {
+        const key = args.key || "enter";
+        context.onProgress(`Pressing ${key.toUpperCase()}...`, "in-progress");
+        try {
+          const res = await fetch("/api/computer/execute", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ tool: "press_key", arguments: { key } }),
+          });
+          const data = await res.json();
+          if (data.success) {
+            context.onProgress(`Pressed ${key.toUpperCase()} successfully`, "completed");
+            return { success: true, message: `Pressed ${key.toUpperCase()} successfully.` };
+          }
+          return { success: false, message: `Could not press key ${key}.`, error: data.error };
+        } catch (err: any) {
+          return { success: false, message: `Could not press key ${key}.`, error: err?.message };
+        }
+      }
+
+      // 11. UNKNOWN / Future LLM Fallback (Prepared but zero external calls in this phase)
+      default: {
+        context.onProgress("Command unrecognized by deterministic rules", "completed");
+        return {
+          success: false,
+          message: "LUMA doesn't know this command yet. Try asking to open an app, search a website, or control media.",
+        };
+      }
+    }
+  }
+}
