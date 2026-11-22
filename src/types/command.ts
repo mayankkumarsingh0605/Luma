@@ -29,4 +29,5 @@ export interface UserCommand {
   debugInfo?: RouterDebugInfo;
   taskPlan?: TaskPlan;
   error?: string;
+  data?: any;
 }

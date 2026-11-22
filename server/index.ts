@@ -5,6 +5,7 @@ import { chatRouter } from "./routes/chatRoutes.js";
 import { computerRouter } from "./routes/computerRoutes.js";
 import { voiceRouter } from "./routes/voiceRoutes.js";
 import { systemRouter } from "./routes/systemRoutes.js";
+import { calendarRouter } from "./routes/calendarRoutes.js";
 import { InstanceLockManager } from "./runtime/instanceLock.js";
 import { VoiceRuntimeManager } from "./voice/voiceRuntime.js";
 
@@ -39,6 +40,7 @@ app.use("/api", chatRouter);
 app.use("/api/computer", computerRouter);
 app.use("/api/voice", voiceRouter);
 app.use("/api/system", systemRouter);
+app.use("/api/calendar", calendarRouter);
 
 // Start server with port error resilience and lifecycle logging
 const server = app.listen(PORT, () => {

@@ -113,7 +113,7 @@ export function matchAppIntent(normalizedText: string, rawText: string): IntentM
         arguments: { app: resolved.canonical, appDisplayName: resolved.displayName, windowTarget: rawTarget },
         toolToExecute: "focus_app",
       };
-    } else if (cleanTarget.length > 0) {
+    } else if (cleanTarget.length > 0 && !/^tab(\s+\d+|\s+.+)?$/i.test(rawTarget) && !rawTarget.toLowerCase().includes("browser tab")) {
       // Allow switching to arbitrary window title or process
       return {
         matched: true,

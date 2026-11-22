@@ -4,6 +4,13 @@ import { chromium, type BrowserContext, type Page } from "playwright-core";
 import { AppRegistry } from "../apps/appRegistry.js";
 import { WindowsBridge } from "../native/windowsBridge.js";
 
+export interface TabInfo {
+  index: number;
+  title: string;
+  url: string;
+  isActive: boolean;
+}
+
 export class BrowserSession {
   private static context: BrowserContext | null = null;
   private static activePage: Page | null = null;
@@ -43,6 +50,36 @@ export class BrowserSession {
     throw new Error(
       "Google Chrome executable could not be located on this system. Please ensure Chrome is installed."
     );
+  }
+
+  /**
+   * Checks whether a URL points to the LUMA local application (frontend or backend).
+   * Protected origins must NEVER be navigated away, refreshed, or clicked by automated website tools.
+   */
+  static isProtectedUrl(url?: string): boolean {
+    if (!url || typeof url !== "string") return false;
+    try {
+      const u = new URL(url);
+      const host = u.hostname.toLowerCase();
+      const port = u.port;
+      if (
+        (host === "localhost" || host === "127.0.0.1" || host === "::1") &&
+        (port === "5173" || port === "3001" || port === "5174")
+      ) {
+        return true;
+      }
+    } catch {
+      const lower = url.toLowerCase();
+      if (
+        lower.includes("localhost:5173") ||
+        lower.includes("127.0.0.1:5173") ||
+        lower.includes("localhost:3001") ||
+        lower.includes("127.0.0.1:3001")
+      ) {
+        return true;
+      }
+    }
+    return false;
   }
 
   /**
@@ -91,7 +128,8 @@ export class BrowserSession {
           const contexts = browser.contexts();
           this.context = contexts.length > 0 ? contexts[0] : await browser.newContext();
           const pages = this.context.pages();
-          this.activePage = pages.length > 0 ? pages[0] : await this.context.newPage();
+          const automationPages = pages.filter((p) => !p.isClosed() && !this.isProtectedUrl(p.url()));
+          this.activePage = automationPages.length > 0 ? automationPages[0] : await this.context.newPage();
 
           // Bring window to foreground
           await WindowsBridge.focusWindow("Google Chrome").catch(() => {});
@@ -125,12 +163,13 @@ export class BrowserSession {
       });
 
       const pages = this.context.pages();
-      this.activePage = pages.length > 0 ? pages[0] : await this.context.newPage();
+      const automationPages = pages.filter((p) => !p.isClosed() && !this.isProtectedUrl(p.url()));
+      this.activePage = automationPages.length > 0 ? automationPages[0] : await this.context.newPage();
 
       // Clean up on page close
       this.activePage.on("close", () => {
         if (this.context) {
-          const remaining = this.context.pages();
+          const remaining = this.context.pages().filter((p) => !p.isClosed() && !this.isProtectedUrl(p.url()));
           this.activePage = remaining.length > 0 ? remaining[0] : null;
         } else {
           this.activePage = null;
@@ -148,10 +187,47 @@ export class BrowserSession {
 
   /**
    * Retrieves the current active page in the controlled browser session.
+   * Enforces Protected-Origin Guard: never returns a tab pointing to the LUMA local application.
    */
-  static async getActivePage(): Promise<Page> {
-    const { page } = await this.getSession();
-    return page;
+  static async getActivePage(options?: { allowProtected?: boolean; targetUrl?: string }): Promise<Page> {
+    const { context } = await this.getSession();
+    const pages = context.pages();
+
+    // 1. If targetUrl specified, search for open page matching it
+    if (options?.targetUrl) {
+      const tLower = options.targetUrl.toLowerCase();
+      const matched = pages.find(
+        (p) => !p.isClosed() && p.url().toLowerCase().includes(tLower) && (!this.isProtectedUrl(p.url()) || options.allowProtected)
+      );
+      if (matched) {
+        this.activePage = matched;
+        return matched;
+      }
+    }
+
+    // 2. Check if current this.activePage is valid and not protected
+    if (
+      this.activePage &&
+      !this.activePage.isClosed() &&
+      (!this.isProtectedUrl(this.activePage.url()) || options?.allowProtected)
+    ) {
+      return this.activePage;
+    }
+
+    // 3. Search for any open non-protected automation page
+    const nonProtected = pages.filter(
+      (p) => !p.isClosed() && (!this.isProtectedUrl(p.url()) || options?.allowProtected)
+    );
+    if (nonProtected.length > 0) {
+      this.activePage = nonProtected[0];
+      return this.activePage;
+    }
+
+    // 4. If all open tabs are protected LUMA pages, spawn a new automation tab
+    console.log("[BrowserSession] All open tabs are protected LUMA pages. Spawning a dedicated automation tab.");
+    const newPage = await context.newPage();
+    this.activePage = newPage;
+    return newPage;
   }
 
   /**
@@ -159,6 +235,215 @@ export class BrowserSession {
    */
   static async focusBrowser(): Promise<void> {
     await WindowsBridge.focusWindow("Google Chrome").catch(() => {});
+  }
+
+  /**
+   * Opens a new tab in the existing controlled Chrome session without creating duplicate windows.
+   */
+  static async createTab(url?: string): Promise<{ index: number; title: string; url: string }> {
+    const { context } = await this.getSession();
+    const newPage = await context.newPage();
+
+    this.activePage = newPage;
+    await this.focusBrowser();
+
+    newPage.on("close", () => {
+      if (this.context) {
+        const remaining = this.context.pages();
+        this.activePage = remaining.length > 0 ? remaining[remaining.length - 1] : null;
+      }
+    });
+
+    if (url) {
+      await newPage.goto(url, { waitUntil: "domcontentloaded", timeout: 20000 });
+    }
+
+    const pages = context.pages();
+    const index = pages.indexOf(newPage);
+    const title = await newPage.title().catch(() => "New Tab");
+
+    return {
+      index,
+      title,
+      url: newPage.url(),
+    };
+  }
+
+  /**
+   * Lists all open tabs in the controlled browser context.
+   */
+  static async listTabs(): Promise<TabInfo[]> {
+    const { context } = await this.getSession();
+    const pages = context.pages();
+    const list: TabInfo[] = [];
+
+    for (let i = 0; i < pages.length; i++) {
+      const p = pages[i];
+      let title = "Unknown";
+      let url = "";
+      try {
+        title = await p.title();
+        url = p.url();
+      } catch {
+        // Page might be navigating
+      }
+
+      list.push({
+        index: i,
+        title,
+        url,
+        isActive: p === this.activePage,
+      });
+    }
+
+    return list;
+  }
+
+  /**
+   * Switches to a specific tab by index or title/URL substring.
+   */
+  static async switchTab(target: number | string): Promise<{
+    success: boolean;
+    index: number;
+    title: string;
+    url: string;
+    message: string;
+  }> {
+    const { context } = await this.getSession();
+    const pages = context.pages();
+    if (pages.length === 0) {
+      throw new Error("No open tabs found in the browser session.");
+    }
+
+    let targetPage: Page | undefined;
+    let targetIndex = -1;
+
+    if (typeof target === "number") {
+      if (target >= 0 && target < pages.length) {
+        targetPage = pages[target];
+        targetIndex = target;
+      }
+    } else {
+      const tLower = target.toLowerCase().trim();
+      for (let i = 0; i < pages.length; i++) {
+        const p = pages[i];
+        const title = (await p.title().catch(() => "")).toLowerCase();
+        const url = p.url().toLowerCase();
+        if (title.includes(tLower) || url.includes(tLower)) {
+          targetPage = p;
+          targetIndex = i;
+          break;
+        }
+      }
+    }
+
+    if (!targetPage) {
+      return {
+        success: false,
+        index: -1,
+        title: "",
+        url: "",
+        message: `Tab matching "${target}" was not found.`,
+      };
+    }
+
+    await targetPage.bringToFront();
+    this.activePage = targetPage;
+    await this.focusBrowser();
+
+    const finalTitle = await targetPage.title().catch(() => "");
+    return {
+      success: true,
+      index: targetIndex,
+      title: finalTitle,
+      url: targetPage.url(),
+      message: `Switched to tab #${targetIndex}: "${finalTitle}".`,
+    };
+  }
+
+  /**
+   * Closes a specific tab, preserving unrelated tabs.
+   * If target is omitted, closes the active tab.
+   */
+  static async closeTab(target?: number | string): Promise<{
+    success: boolean;
+    closedTitle: string;
+    remainingCount: number;
+    message: string;
+  }> {
+    const { context } = await this.getSession();
+    const pages = context.pages();
+
+    if (pages.length === 0) {
+      return { success: false, closedTitle: "", remainingCount: 0, message: "No tabs open to close." };
+    }
+
+    let pageToClose: Page | undefined;
+
+    if (target === undefined || target === null) {
+      pageToClose = this.activePage || pages[pages.length - 1];
+    } else if (typeof target === "number") {
+      if (target >= 0 && target < pages.length) {
+        pageToClose = pages[target];
+      }
+    } else {
+      const tLower = target.toLowerCase().trim();
+      for (const p of pages) {
+        const title = (await p.title().catch(() => "")).toLowerCase();
+        const url = p.url().toLowerCase();
+        if (title.includes(tLower) || url.includes(tLower)) {
+          pageToClose = p;
+          break;
+        }
+      }
+    }
+
+    if (!pageToClose) {
+      return {
+        success: false,
+        closedTitle: "",
+        remainingCount: pages.length,
+        message: `Tab matching "${target}" not found to close.`,
+      };
+    }
+
+    if (this.isProtectedUrl(pageToClose.url())) {
+      const closedTitle = await pageToClose.title().catch(() => "LUMA");
+      return {
+        success: false,
+        closedTitle,
+        remainingCount: pages.length,
+        message: "Protected-origin guard: Cannot close protected LUMA application tab.",
+      };
+    }
+
+    const closedTitle = await pageToClose.title().catch(() => "Tab");
+    await pageToClose.close();
+
+    const remaining = context.pages();
+    this.activePage = remaining.length > 0 ? remaining[remaining.length - 1] : null;
+
+    return {
+      success: true,
+      closedTitle,
+      remainingCount: remaining.length,
+      message: `Closed tab "${closedTitle}". ${remaining.length} tab(s) remaining.`,
+    };
+  }
+
+  /**
+   * Returns active tab information.
+   */
+  static async getActiveTabInfo(): Promise<{ index: number; title: string; url: string }> {
+    const page = await this.getActivePage();
+    const { context } = await this.getSession();
+    const pages = context.pages();
+    const index = pages.indexOf(page);
+    return {
+      index,
+      title: await page.title().catch(() => ""),
+      url: page.url(),
+    };
   }
 
   /**

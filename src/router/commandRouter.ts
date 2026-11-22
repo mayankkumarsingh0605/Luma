@@ -8,6 +8,7 @@ import { matchFileIntent } from "./intents/fileIntent.js";
 import { matchMediaIntent } from "./intents/mediaIntent.js";
 import { matchSystemIntent } from "./intents/systemIntent.js";
 import { matchYouTubeIntent } from "./intents/youtubeIntent.js";
+import { matchCalendarIntent } from "./intents/calendarIntent.js";
 import { ComputerStateManager } from "../state/computerState.js";
 
 /**
@@ -94,6 +95,10 @@ export function routeCommand(rawCommand: string, contextualTarget?: string): Rou
   // YouTube Specialized Intents (video playback, playlists, selection)
   const ytMatch = matchYouTubeIntent(normalizedCommand, rawCommand, effectiveTarget);
   if (ytMatch) return toRouted(ytMatch);
+
+  // Calendar Specialized Intents (auth, status, logout, upcoming events)
+  const calendarMatch = matchCalendarIntent(normalizedCommand, rawCommand);
+  if (calendarMatch) return toRouted(calendarMatch);
 
   // A. System & GUI Control (e.g. "what window is active", "find Chrome in installed apps", "find chrome.exe in processes", "take a screenshot")
   const systemMatch = matchSystemIntent(normalizedCommand, rawCommand);

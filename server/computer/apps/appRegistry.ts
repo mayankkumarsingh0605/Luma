@@ -2,7 +2,7 @@ import fs from "fs";
 import { exec } from "child_process";
 import { promisify } from "util";
 import type { AppDefinition } from "../types.js";
-import { AppDiscovery, type LaunchTarget } from "./appDiscovery.js";
+import { AppDiscovery } from "./appDiscovery.js";
 
 const execAsync = promisify(exec);
 

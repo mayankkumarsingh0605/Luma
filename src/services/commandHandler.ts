@@ -34,6 +34,24 @@ import { AgentStateManager } from "../agent/agentStateManager.js";
  * Zero external LLM calls for deterministic computer control.
  */
 
+/**
+ * Executes a memory tool via the canonical /api/computer/execute endpoint.
+ */
+async function executeMemoryTool(tool: string, args: Record<string, any> = {}): Promise<any> {
+  try {
+    const res = await fetch("/api/computer/execute", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ tool, arguments: args }),
+    });
+    if (!res.ok) return null;
+    const d = await res.json();
+    return d.result !== undefined ? d.result : d;
+  } catch {
+    return null;
+  }
+}
+
 export async function processUserCommand(
   text: string,
   onUpdate?: (updatedCommand: UserCommand) => void
@@ -78,15 +96,53 @@ export async function processUserCommand(
     onUpdate({ ...currentCommand });
   }
 
+  // Retrieve compact context via memory_get_context tool
+  const routedPre = routeCommand(text);
+  let compactContext: any = null;
+  try {
+    compactContext = await executeMemoryTool("memory_get_context", {
+      command: text,
+      intent: routedPre.intent,
+    });
+  } catch {
+    // Non-fatal
+  }
+
   // 1. Check if user command is a multi-step autonomous agent goal
   if (TaskPlanner.isAgentGoal(text)) {
-    const plan = TaskPlanner.planTask(text);
+    let plan;
+    try {
+      plan = TaskPlanner.planTask(text, compactContext);
+      const validation = TaskPlanner.validatePlan(plan);
+      if (!validation.valid) {
+        throw new Error(`Task plan validation failed: ${validation.error}`);
+      }
+    } catch (planErr: any) {
+      currentCommand = {
+        ...currentCommand,
+        status: "failed",
+        response: planErr?.message || "Could not generate a valid task plan.",
+        error: planErr?.message,
+      };
+      if (onUpdate) onUpdate({ ...currentCommand });
+      return currentCommand;
+    }
+
     currentCommand = {
       ...currentCommand,
       response: `Executing autonomous plan: ${plan.goal}`,
       taskPlan: plan,
     };
     if (onUpdate) onUpdate({ ...currentCommand });
+
+    // Save active task context
+    try {
+      await executeMemoryTool("memory_save_task_context", {
+        taskId: plan.id,
+        goal: plan.goal,
+        currentStep: 1,
+      });
+    } catch {}
 
     // Real-time synchronization of step updates to UI
     const unsubscribe = AgentStateManager.subscribe((_state, updatedPlan) => {
@@ -104,6 +160,13 @@ export async function processUserCommand(
       const loopResult = await AgentExecutionLoop.run(plan);
       unsubscribe();
 
+      // Archive task upon completion
+      try {
+        await executeMemoryTool("memory_archive_task_context", {
+          taskId: plan.id,
+        });
+      } catch {}
+
       const finalPlan = loopResult.plan || AgentStateManager.getPlan() || plan;
       currentCommand = {
         ...currentCommand,
@@ -116,6 +179,11 @@ export async function processUserCommand(
       return currentCommand;
     } catch (loopErr: any) {
       unsubscribe();
+      try {
+        await executeMemoryTool("memory_archive_task_context", {
+          taskId: plan.id,
+        });
+      } catch {}
       currentCommand = {
         ...currentCommand,
         status: "failed",
@@ -172,6 +240,7 @@ export async function processUserCommand(
   const workflowContext: WorkflowContext = {
     commandId,
     rawCommand: text,
+    compactContext,
     onProgress: (stepMessage: string, stepStatus: WorkflowStatus) => {
       const stepTime = new Date().toLocaleTimeString([], {
         hour: "2-digit",
@@ -242,6 +311,7 @@ export async function processUserCommand(
       activities: finalActivities,
       debugInfo,
       error: result.error,
+      data: result.data,
     };
 
     if (onUpdate) onUpdate({ ...currentCommand });

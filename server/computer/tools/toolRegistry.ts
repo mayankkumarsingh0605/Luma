@@ -8,6 +8,9 @@ import { MediaController, type MediaAction } from "../system/mediaController.js"
 import { BrowserInspectController } from "../system/browserInspectController.js";
 import { ObservationManager } from "../../observation/observationManager.js";
 import { BrowserController } from "../browser/browserController.js";
+import { ContextManager } from "../../memory/contextManager.js";
+import { GoogleOAuthManager } from "../../calendar/googleOAuthManager.js";
+import { GoogleCalendarClient } from "../../calendar/googleCalendarClient.js";
 
 export interface RegisteredTool {
   definition: ToolDefinition;
@@ -962,7 +965,7 @@ export class ToolRegistry {
       definition: {
         name: "youtube_create_playlist",
         displayName: "Create Playlist",
-        description: "Creates a new user playlist with the provided name.",
+        description: "Creates a new user playlist with the provided name and privacy directly in YouTube account.",
         category: "app",
         safetyLevel: "SAFE",
         parameters: [
@@ -972,10 +975,17 @@ export class ToolRegistry {
             description: "Name of the playlist to create.",
             required: true,
           },
+          {
+            name: "privacy",
+            type: "string",
+            description: "Privacy visibility: 'PUBLIC', 'UNLISTED', or 'PRIVATE'.",
+            required: false,
+            default: "PRIVATE",
+          },
         ],
       },
       handler: async (args) => {
-        return await BrowserController.createPlaylist(args.name);
+        return await BrowserController.createPlaylist(args.name, args.privacy);
       },
     });
 
@@ -1055,10 +1065,22 @@ export class ToolRegistry {
             description: "Name of the playlist to play.",
             required: true,
           },
+          {
+            name: "index",
+            type: "number",
+            description: "Optional 1-based index of the video to play from the playlist.",
+            required: false,
+          },
+          {
+            name: "next",
+            type: "boolean",
+            description: "If true, advances to and plays the next video in the playlist.",
+            required: false,
+          },
         ],
       },
       handler: async (args) => {
-        return await BrowserController.playPlaylist(args.name);
+        return await BrowserController.playPlaylist(args.name, args.index, args.next);
       },
     });
 
@@ -1107,6 +1129,1188 @@ export class ToolRegistry {
       },
       handler: async (args) => {
         return await BrowserController.getPlaylist(args.name);
+      },
+    });
+
+    this.register({
+      definition: {
+        name: "youtube_seek",
+        displayName: "Seek Video",
+        description: "Seeks the currently playing video forward or backward by the specified number of seconds.",
+        category: "app",
+        safetyLevel: "SAFE",
+        parameters: [
+          {
+            name: "seconds",
+            type: "number",
+            description: "Seconds to seek (+10 for forward, -10 for backward).",
+            required: true,
+          },
+          {
+            name: "site",
+            type: "string",
+            description: "Target video site (default 'youtube').",
+            required: false,
+          },
+        ],
+      },
+      handler: async (args) => {
+        const seconds = Number(args.seconds) || 0;
+        return await BrowserController.seekVideo(seconds, args.site);
+      },
+    });
+
+    this.register({
+      definition: {
+        name: "youtube_get_video_info",
+        displayName: "Get Video Info",
+        description: "Retrieves metadata of the currently playing video (title, channel, duration, progress).",
+        category: "app",
+        safetyLevel: "SAFE",
+        parameters: [
+          {
+            name: "site",
+            type: "string",
+            description: "Target video site (default 'youtube').",
+            required: false,
+          },
+        ],
+      },
+      handler: async (args) => {
+        return await BrowserController.getVideoInfo(args?.site);
+      },
+    });
+
+    this.register({
+      definition: {
+        name: "youtube_get_playback_state",
+        displayName: "Get Playback State",
+        description: "Detects current playback state: PLAYING, PAUSED, BUFFERING, ENDED, ERROR, NO_VIDEO.",
+        category: "app",
+        safetyLevel: "SAFE",
+        parameters: [
+          {
+            name: "site",
+            type: "string",
+            description: "Target video site (default 'youtube').",
+            required: false,
+          },
+        ],
+      },
+      handler: async (args) => {
+        return await BrowserController.getPlaybackState(args?.site);
+      },
+    });
+
+    this.register({
+      definition: {
+        name: "youtube_set_fullscreen",
+        displayName: "Set Fullscreen",
+        description: "Toggles or sets fullscreen mode for the active video player.",
+        category: "app",
+        safetyLevel: "SAFE",
+        parameters: [
+          {
+            name: "enable",
+            type: "boolean",
+            description: "Optional explicit fullscreen state (true for fullscreen, false to exit). Omit to toggle.",
+            required: false,
+          },
+          {
+            name: "site",
+            type: "string",
+            description: "Target video site (default 'youtube').",
+            required: false,
+          },
+        ],
+      },
+      handler: async (args) => {
+        return await BrowserController.setFullscreen(args.enable, args.site);
+      },
+    });
+
+    this.register({
+      definition: {
+        name: "youtube_get_fullscreen_state",
+        displayName: "Get Fullscreen State",
+        description: "Queries whether the active video player is currently in fullscreen mode.",
+        category: "app",
+        safetyLevel: "SAFE",
+        parameters: [
+          {
+            name: "site",
+            type: "string",
+            description: "Target video site (default 'youtube').",
+            required: false,
+          },
+        ],
+      },
+      handler: async (args) => {
+        return await BrowserController.getFullscreenState(args?.site);
+      },
+    });
+
+    this.register({
+      definition: {
+        name: "youtube_stop_video",
+        displayName: "Stop Video",
+        description: "Stops video playback and resets player to beginning.",
+        category: "app",
+        safetyLevel: "SAFE",
+        parameters: [
+          {
+            name: "site",
+            type: "string",
+            description: "Target video site (default 'youtube').",
+            required: false,
+          },
+        ],
+      },
+      handler: async (args) => {
+        return await BrowserController.stopVideo(args?.site);
+      },
+    });
+
+    this.register({
+      definition: {
+        name: "youtube_skip_ad",
+        displayName: "Skip Ad",
+        description: "Skips active advertisement on YouTube if skip button is present and enabled.",
+        category: "app",
+        safetyLevel: "SAFE",
+        parameters: [
+          {
+            name: "site",
+            type: "string",
+            description: "Target video site (default 'youtube').",
+            required: false,
+          },
+        ],
+      },
+      handler: async (args) => {
+        return await BrowserController.skipAd(args?.site);
+      },
+    });
+
+    this.register({
+      definition: {
+        name: "youtube_open_playlist_ui",
+        displayName: "Open Playlist UI",
+        description: "Opens a user playlist on YouTube interface in the controlled browser.",
+        category: "app",
+        safetyLevel: "SAFE",
+        parameters: [
+          {
+            name: "name",
+            type: "string",
+            description: "Playlist name or direct YouTube playlist URL.",
+            required: true,
+          },
+        ],
+      },
+      handler: async (args) => {
+        return await BrowserController.openPlaylistUI(args.name);
+      },
+    });
+
+    this.register({
+      definition: {
+        name: "youtube_list_playlist_videos_ui",
+        displayName: "List Playlist Videos UI",
+        description: "Lists videos present in a YouTube playlist page in the controlled browser.",
+        category: "app",
+        safetyLevel: "SAFE",
+        parameters: [
+          {
+            name: "name",
+            type: "string",
+            description: "Optional playlist name or URL to open and inspect.",
+            required: false,
+          },
+        ],
+      },
+      handler: async (args) => {
+        return await BrowserController.listPlaylistVideosUI(args?.name);
+      },
+    });
+
+    this.register({
+      definition: {
+        name: "youtube_remove_from_playlist_ui",
+        displayName: "Remove from Playlist UI",
+        description: "Removes a video from a YouTube playlist via UI with confirmation gate.",
+        category: "app",
+        safetyLevel: "CONFIRM_REQUIRED",
+        parameters: [
+          {
+            name: "playlist_name",
+            type: "string",
+            description: "Name of the playlist.",
+            required: true,
+          },
+          {
+            name: "video",
+            type: "string",
+            description: "Title or identifier of the video to remove.",
+            required: true,
+          },
+          {
+            name: "confirmed",
+            type: "boolean",
+            description: "User confirmation flag.",
+            required: false,
+            default: false,
+          },
+        ],
+      },
+      handler: async (args) => {
+        return await BrowserController.removeVideoFromPlaylistUI(args.playlist_name, args.video, args.confirmed);
+      },
+    });
+
+    this.register({
+      definition: {
+        name: "youtube_list_playlists",
+        displayName: "List YouTube Playlists",
+        description: "Lists all playlists in the user's logged-in YouTube account.",
+        category: "app",
+        safetyLevel: "SAFE",
+        parameters: [],
+      },
+      handler: async () => {
+        return await BrowserController.listPlaylists();
+      },
+    });
+
+    this.register({
+      definition: {
+        name: "youtube_count_playlist_videos",
+        displayName: "Count Playlist Videos",
+        description: "Counts total number of videos in a YouTube playlist.",
+        category: "app",
+        safetyLevel: "SAFE",
+        parameters: [
+          {
+            name: "playlist_name",
+            type: "string",
+            description: "Name or URL of the playlist.",
+            required: true,
+          },
+        ],
+      },
+      handler: async (args) => {
+        return await BrowserController.countPlaylistVideos(args.playlist_name);
+      },
+    });
+
+    this.register({
+      definition: {
+        name: "youtube_help_commands",
+        displayName: "YouTube Commands Help",
+        description: "Returns the supported command catalog and usage examples for YouTube automation.",
+        category: "app",
+        safetyLevel: "SAFE",
+        parameters: [
+          {
+            name: "category",
+            type: "string",
+            description: "Optional category filter ('playback', 'fullscreen', 'ad', 'playlist').",
+            required: false,
+          },
+        ],
+      },
+      handler: async (args) => {
+        return await BrowserController.getYouTubeCommandsCatalog(args?.category);
+      },
+    });
+
+    this.register({
+      definition: {
+        name: "youtube_rename_playlist",
+        displayName: "Rename Playlist",
+        description: "Renames a user playlist directly on YouTube.",
+        category: "app",
+        safetyLevel: "SAFE",
+        parameters: [
+          {
+            name: "old_name",
+            type: "string",
+            description: "Current name or URL of the playlist.",
+            required: true,
+          },
+          {
+            name: "new_name",
+            type: "string",
+            description: "New name for the playlist.",
+            required: true,
+          },
+        ],
+      },
+      handler: async (args) => {
+        return await BrowserController.renamePlaylist(args.old_name, args.new_name);
+      },
+    });
+
+    this.register({
+      definition: {
+        name: "youtube_update_playlist_privacy",
+        displayName: "Update Playlist Privacy",
+        description: "Updates visibility/privacy setting of a YouTube playlist ('PUBLIC', 'UNLISTED', 'PRIVATE').",
+        category: "app",
+        safetyLevel: "SAFE",
+        parameters: [
+          {
+            name: "playlist_name",
+            type: "string",
+            description: "Name or URL of the playlist.",
+            required: true,
+          },
+          {
+            name: "privacy",
+            type: "string",
+            description: "Privacy visibility ('PUBLIC', 'UNLISTED', 'PRIVATE').",
+            required: true,
+          },
+        ],
+      },
+      handler: async (args) => {
+        return await BrowserController.updatePlaylistPrivacy(args.playlist_name, args.privacy);
+      },
+    });
+
+    this.register({
+      definition: {
+        name: "youtube_add_search_result_to_playlist",
+        displayName: "Add Search Result to Playlist",
+        description: "Searches YouTube and adds the video at rank N to a playlist.",
+        category: "app",
+        safetyLevel: "SAFE",
+        parameters: [
+          {
+            name: "query",
+            type: "string",
+            description: "Search query for YouTube video.",
+            required: true,
+          },
+          {
+            name: "rank",
+            type: "number",
+            description: "Rank of search result (1 for first, 2 for second).",
+            required: false,
+            default: 1,
+          },
+          {
+            name: "playlist_name",
+            type: "string",
+            description: "Target playlist name.",
+            required: true,
+          },
+        ],
+      },
+      handler: async (args) => {
+        const rank = Number(args.rank) || 1;
+        return await BrowserController.addSearchResultToPlaylist(args.query, rank, args.playlist_name);
+      },
+    });
+
+    this.register({
+      definition: {
+        name: "youtube_get_playlist_details",
+        displayName: "Get Playlist Details",
+        description: "Retrieves complete details of a YouTube playlist including stats and video items.",
+        category: "app",
+        safetyLevel: "SAFE",
+        parameters: [
+          {
+            name: "name",
+            type: "string",
+            description: "Playlist name or URL.",
+            required: true,
+          },
+        ],
+      },
+      handler: async (args) => {
+        return await BrowserController.getPlaylist(args.name);
+      },
+    });
+
+    this.register({
+      definition: {
+        name: "youtube_play_playlist_video",
+        displayName: "Play Video from Playlist",
+        description: "Plays a specific video by 1-based index from a YouTube playlist or advances to the next video.",
+        category: "app",
+        safetyLevel: "SAFE",
+        parameters: [
+          {
+            name: "playlist_name",
+            type: "string",
+            description: "Name or URL of the playlist (e.g. 'Watch Later', 'LUMA').",
+            required: false,
+          },
+          {
+            name: "index",
+            type: "number",
+            description: "1-based index of the video (1 = first, 2 = second, 3 = third).",
+            required: false,
+          },
+          {
+            name: "next",
+            type: "boolean",
+            description: "Whether to play the next video in the playlist.",
+            required: false,
+          },
+        ],
+      },
+      handler: async (args) => {
+        return await BrowserController.playPlaylistVideo(args.playlist_name, args.index, args.next);
+      },
+    });
+
+    this.register({
+      definition: {
+        name: "youtube_create_playlist_from_video",
+        displayName: "Create Playlist from Video",
+        description: "Creates a new YouTube playlist seeded with a specific video using YouTube's real Save-to-playlist workflow.",
+        category: "app",
+        safetyLevel: "SAFE",
+        parameters: [
+          {
+            name: "name",
+            type: "string",
+            description: "Name of the playlist to create.",
+            required: true,
+          },
+          {
+            name: "privacy",
+            type: "string",
+            description: "Visibility: 'PUBLIC', 'UNLISTED', or 'PRIVATE'.",
+            required: false,
+            enum: ["PUBLIC", "UNLISTED", "PRIVATE"],
+          },
+          {
+            name: "video_context",
+            type: "object",
+            description: "Optional video context details (URL, title, rank, or query).",
+            required: false,
+          },
+        ],
+      },
+      handler: async (args) => {
+        return await BrowserController.createPlaylistFromVideo(args.name, args.privacy, args.video_context);
+      },
+    });
+
+    // 10. Browser Tab Management Tools
+    this.register({
+      definition: {
+        name: "browser_new_tab",
+        displayName: "New Browser Tab",
+        description: "Opens a new tab in the controlled Chrome session and optionally navigates to a URL.",
+        category: "app",
+        safetyLevel: "SAFE",
+        parameters: [
+          {
+            name: "url",
+            type: "string",
+            description: "Optional destination URL to open in the new tab.",
+            required: false,
+          },
+        ],
+      },
+      handler: async (args) => {
+        return await BrowserController.createTab(args.url);
+      },
+    });
+
+    this.register({
+      definition: {
+        name: "browser_list_tabs",
+        displayName: "List Browser Tabs",
+        description: "Lists all open tabs in the controlled Chrome session.",
+        category: "app",
+        safetyLevel: "SAFE",
+        parameters: [],
+      },
+      handler: async () => {
+        return await BrowserController.listTabs();
+      },
+    });
+
+    this.register({
+      definition: {
+        name: "browser_switch_tab",
+        displayName: "Switch Browser Tab",
+        description: "Switches to an open browser tab by index or title/URL matching.",
+        category: "app",
+        safetyLevel: "SAFE",
+        parameters: [
+          {
+            name: "target",
+            type: "string",
+            description: "Tab index number or title/URL substring to match.",
+            required: true,
+          },
+        ],
+      },
+      handler: async (args) => {
+        const tgt = !isNaN(Number(args.target)) ? Number(args.target) : args.target;
+        return await BrowserController.switchTab(tgt);
+      },
+    });
+
+    this.register({
+      definition: {
+        name: "browser_close_tab",
+        displayName: "Close Browser Tab",
+        description: "Closes a specific tab or the active tab, preserving other tabs.",
+        category: "app",
+        safetyLevel: "SAFE",
+        parameters: [
+          {
+            name: "target",
+            type: "string",
+            description: "Optional tab index or title/URL substring to close. If omitted, closes active tab.",
+            required: false,
+          },
+        ],
+      },
+      handler: async (args) => {
+        const tgt = args.target !== undefined && !isNaN(Number(args.target)) ? Number(args.target) : args.target;
+        return await BrowserController.closeTab(tgt);
+      },
+    });
+
+    this.register({
+      definition: {
+        name: "browser_get_active_tab",
+        displayName: "Get Active Tab",
+        description: "Retrieves title, index, and URL of the active browser tab.",
+        category: "app",
+        safetyLevel: "SAFE",
+        parameters: [],
+      },
+      handler: async () => {
+        return await BrowserController.getActiveTab();
+      },
+    });
+
+    // 11. Universal Page Observation & Content Extraction Tools
+    this.register({
+      definition: {
+        name: "browser_inspect_page",
+        displayName: "Inspect Webpage DOM",
+        description: "Performs semantic DOM inspection on the active webpage, returning headings, buttons, links, inputs, and states.",
+        category: "app",
+        safetyLevel: "SAFE",
+        parameters: [],
+      },
+      handler: async () => {
+        return await BrowserController.inspectPage();
+      },
+    });
+
+    this.register({
+      definition: {
+        name: "browser_read_page_content",
+        displayName: "Read Page Content",
+        description: "Reads, extracts, and summarizes visible text, headings, and search results on the active page.",
+        category: "app",
+        safetyLevel: "SAFE",
+        parameters: [],
+      },
+      handler: async () => {
+        return await BrowserController.readPageContent();
+      },
+    });
+
+    // 12. Form Inspection & Filling Tools
+    this.register({
+      definition: {
+        name: "browser_inspect_form",
+        displayName: "Inspect Form Fields",
+        description: "Inspects all interactive form fields on the active webpage.",
+        category: "app",
+        safetyLevel: "SAFE",
+        parameters: [],
+      },
+      handler: async () => {
+        return await BrowserController.inspectForm();
+      },
+    });
+
+    this.register({
+      definition: {
+        name: "browser_fill_form",
+        displayName: "Fill Form Fields",
+        description: "Fills form fields on the active page matching provided data or user profile data.",
+        category: "app",
+        safetyLevel: "SAFE",
+        parameters: [
+          {
+            name: "data",
+            type: "object",
+            description: "Key-value map of form field values to enter.",
+            required: false,
+          },
+          {
+            name: "submit",
+            type: "boolean",
+            description: "Whether to request form submission (subject to safety gate confirmation).",
+            required: false,
+          },
+        ],
+      },
+      handler: async (args) => {
+        return await BrowserController.fillForm(args.data || {}, { submit: args.submit });
+      },
+    });
+
+    // 13. File / PDF Download Tools
+    this.register({
+      definition: {
+        name: "browser_download_file",
+        displayName: "Download File from Page",
+        description: "Locates and downloads a document or PDF from the active webpage, saving to Downloads.",
+        category: "app",
+        safetyLevel: "SAFE",
+        parameters: [
+          {
+            name: "query",
+            type: "string",
+            description: "Keyword or file type to download (e.g. 'pdf', 'report', 'manual').",
+            required: false,
+          },
+          {
+            name: "targetDir",
+            type: "string",
+            description: "Optional destination directory.",
+            required: false,
+          },
+        ],
+      },
+      handler: async (args) => {
+        return await BrowserController.downloadFile(args.query || "pdf", args.targetDir);
+      },
+    });
+
+    // 14. Ranked Video Playback Tool
+    this.register({
+      definition: {
+        name: "browser_play_video_rank",
+        displayName: "Play Video By Rank",
+        description: "Plays the video at the given rank (1 = first, 2 = second, etc.) on YouTube.",
+        category: "app",
+        safetyLevel: "SAFE",
+        parameters: [
+          {
+            name: "rank",
+            type: "number",
+            description: "Rank of video to play (1 for first, 2 for second, etc.).",
+            required: true,
+          },
+        ],
+      },
+      handler: async (args) => {
+        const r = Number(args.rank) || 1;
+        return await BrowserController.playVideoByRank(r);
+      },
+    });
+
+    // 15. Context & Personal Memory Tools
+    this.register({
+      definition: {
+        name: "memory_save",
+        displayName: "Save Long-Term Memory",
+        description: "Saves a new fact or topic into LUMA's persistent local memory.",
+        category: "system",
+        safetyLevel: "SAFE",
+        parameters: [
+          {
+            name: "topic",
+            type: "string",
+            description: "Topic or category title.",
+            required: true,
+          },
+          {
+            name: "content",
+            type: "string",
+            description: "Detailed content to remember.",
+            required: true,
+          },
+          {
+            name: "tags",
+            type: "array",
+            description: "Optional search tags.",
+            required: false,
+          },
+          {
+            name: "importance",
+            type: "number",
+            description: "Importance level 1-5 (default 1).",
+            required: false,
+          },
+        ],
+      },
+      handler: async (args) => {
+        return ContextManager.saveMemory(args.topic, args.content, args.tags, args.importance);
+      },
+    });
+
+    this.register({
+      definition: {
+        name: "memory_get",
+        displayName: "Retrieve Memories",
+        description: "Retrieves memories matching a query, topic, or tag.",
+        category: "system",
+        safetyLevel: "SAFE",
+        parameters: [
+          {
+            name: "query",
+            type: "string",
+            description: "Search keyword.",
+            required: false,
+          },
+        ],
+      },
+      handler: async (args) => {
+        return ContextManager.getMemories({ query: args.query });
+      },
+    });
+
+    this.register({
+      definition: {
+        name: "memory_review",
+        displayName: "Review All Memories",
+        description: "Returns profile, preferences, and long-term memories for user review.",
+        category: "system",
+        safetyLevel: "SAFE",
+        parameters: [],
+      },
+      handler: async () => {
+        return ContextManager.reviewMemories();
+      },
+    });
+
+    this.register({
+      definition: {
+        name: "memory_correct",
+        displayName: "Correct Memory",
+        description: "Updates or corrects an existing memory item.",
+        category: "system",
+        safetyLevel: "SAFE",
+        parameters: [
+          {
+            name: "id",
+            type: "number",
+            description: "ID of memory record to correct.",
+            required: true,
+          },
+          {
+            name: "content",
+            type: "string",
+            description: "Corrected content.",
+            required: true,
+          },
+        ],
+      },
+      handler: async (args) => {
+        return ContextManager.correctMemory(Number(args.id), args.content);
+      },
+    });
+
+    this.register({
+      definition: {
+        name: "memory_delete",
+        displayName: "Delete Memory",
+        description: "Deletes a specific memory item by ID.",
+        category: "system",
+        safetyLevel: "SAFE",
+        parameters: [
+          {
+            name: "id",
+            type: "number",
+            description: "ID of memory record to delete.",
+            required: true,
+          },
+        ],
+      },
+      handler: async (args) => {
+        return ContextManager.deleteMemory(Number(args.id));
+      },
+    });
+
+    this.register({
+      definition: {
+        name: "memory_get_profile",
+        displayName: "Get User Profile",
+        description: "Retrieves the current user profile fields.",
+        category: "system",
+        safetyLevel: "SAFE",
+        parameters: [],
+      },
+      handler: async () => {
+        return ContextManager.getProfile();
+      },
+    });
+
+    this.register({
+      definition: {
+        name: "memory_update_profile",
+        displayName: "Update User Profile",
+        description: "Updates a user profile field (e.g. name, email, phone).",
+        category: "system",
+        safetyLevel: "SAFE",
+        parameters: [
+          {
+            name: "key",
+            type: "string",
+            description: "Profile field name.",
+            required: true,
+          },
+          {
+            name: "value",
+            type: "string",
+            description: "New value for field.",
+            required: true,
+          },
+        ],
+      },
+      handler: async (args) => {
+        return ContextManager.updateProfile(args.key, args.value);
+      },
+    });
+
+    this.register({
+      definition: {
+        name: "memory_get_context",
+        displayName: "Get Compact Context",
+        description: "Retrieves compact structured context for an incoming user command.",
+        category: "system",
+        safetyLevel: "SAFE",
+        parameters: [
+          { name: "command", type: "string", description: "User command", required: true },
+          { name: "intent", type: "string", description: "Identified intent", required: false },
+        ],
+      },
+      handler: async (args) => {
+        return ContextManager.buildContext(args.command, args.intent);
+      },
+    });
+
+    this.register({
+      definition: {
+        name: "memory_save_task_context",
+        displayName: "Save Active Task Context",
+        description: "Saves active task context and progress into persistent memory.",
+        category: "system",
+        safetyLevel: "SAFE",
+        parameters: [
+          { name: "taskId", type: "string", description: "Unique task identifier", required: true },
+          { name: "goal", type: "string", description: "Task goal", required: true },
+          { name: "currentStep", type: "number", description: "Current step index", required: false },
+        ],
+      },
+      handler: async (args) => {
+        ContextManager.saveTaskContext(args.taskId, args.goal, Number(args.currentStep) || 1);
+        return { success: true, taskId: args.taskId };
+      },
+    });
+
+    this.register({
+      definition: {
+        name: "memory_archive_task_context",
+        displayName: "Archive Active Task Context",
+        description: "Archives an active task context upon completion or failure.",
+        category: "system",
+        safetyLevel: "SAFE",
+        parameters: [
+          { name: "taskId", type: "string", description: "Unique task identifier to archive", required: true },
+        ],
+      },
+      handler: async (args) => {
+        ContextManager.archiveTaskContext(args.taskId);
+        return { success: true, taskId: args.taskId };
+      },
+    });
+
+    // 12. Calendar Tools (Phase 1)
+    this.register({
+      definition: {
+        name: "calendar_auth_login",
+        displayName: "Connect Google Calendar",
+        description: "Initiates Google OAuth 2.0 authorization with PKCE (S256) and opens the consent page in the browser.",
+        category: "system",
+        safetyLevel: "SAFE",
+        parameters: [],
+      },
+      handler: async () => {
+        const authRes = GoogleOAuthManager.generateAuthUrl();
+        if (!authRes.success || !authRes.url) {
+          return { success: false, error: authRes.error || "Failed to generate authorization URL." };
+        }
+        const openRes = await SystemController.openUrl(authRes.url);
+        if (openRes.success) {
+          return {
+            success: true,
+            browserOpened: true,
+            message: "Google authorization page opened in your browser. Please approve access to continue.",
+            url: authRes.url,
+          };
+        } else {
+          return {
+            success: true,
+            browserOpened: false,
+            message: "Google authorization URL generated, but could not automatically open your browser. Please click the button below to authorize.",
+            url: authRes.url,
+            error: openRes.error,
+          };
+        }
+      },
+    });
+
+    this.register({
+      definition: {
+        name: "calendar_auth_status",
+        displayName: "Google Calendar Connection Status",
+        description: "Checks whether Google Calendar is currently connected and reports account details without exposing credentials.",
+        category: "system",
+        safetyLevel: "SAFE",
+        parameters: [],
+      },
+      handler: async () => {
+        return GoogleOAuthManager.getConnectionStatus();
+      },
+    });
+
+    this.register({
+      definition: {
+        name: "calendar_auth_logout",
+        displayName: "Disconnect Google Calendar",
+        description: "Disconnects Google Calendar, revokes access tokens, and removes stored credentials. Requires explicit user confirmation.",
+        category: "system",
+        safetyLevel: "CONFIRM_REQUIRED",
+        parameters: [
+          {
+            name: "confirmed",
+            type: "boolean",
+            description: "Whether the user explicitly confirmed credential revocation and disconnection.",
+            required: false,
+            default: false,
+          },
+        ],
+      },
+      handler: async (args) => {
+        return await GoogleOAuthManager.logout(Boolean(args.confirmed));
+      },
+    });
+
+    this.register({
+      definition: {
+        name: "calendar_list_upcoming_events",
+        displayName: "List Upcoming Calendar Events",
+        description: "Fetches events from the user's primary Google Calendar with support for date ranges (today, tomorrow, this week, upcoming), meetings, and event categorization.",
+        category: "system",
+        safetyLevel: "SAFE",
+        parameters: [
+          {
+            name: "maxResults",
+            type: "number",
+            description: "Maximum number of upcoming events to retrieve (default: 10, max: 50).",
+            required: false,
+            default: 10,
+          },
+          {
+            name: "dateFilter",
+            type: "string",
+            description: "Date filter: 'today', 'tomorrow', 'this_week', or 'upcoming'. Default is 'upcoming'.",
+            required: false,
+            default: "upcoming",
+          },
+          {
+            name: "filterType",
+            type: "string",
+            description: "Filter type: 'all' or 'meeting'. Default is 'all'.",
+            required: false,
+            default: "all",
+          },
+          {
+            name: "nextOnly",
+            type: "boolean",
+            description: "Whether to return only the single next upcoming meeting/event.",
+            required: false,
+            default: false,
+          },
+        ],
+      },
+      handler: async (args) => {
+        return await GoogleCalendarClient.listUpcomingEvents({
+          maxResults: args.maxResults,
+          dateFilter: args.dateFilter,
+          filterType: args.filterType,
+          nextOnly: Boolean(args.nextOnly),
+        });
+      },
+    });
+
+    this.register({
+      definition: {
+        name: "calendar_get_timezone",
+        displayName: "Get Calendar Timezone",
+        description: "Retrieves the primary Google Calendar timezone and local host machine timezone.",
+        category: "system",
+        safetyLevel: "SAFE",
+        parameters: [],
+      },
+      handler: async () => {
+        return await GoogleCalendarClient.getCalendarTimezone();
+      },
+    });
+
+    this.register({
+      definition: {
+        name: "calendar_create_event",
+        displayName: "Create Calendar Event",
+        description: "Creates a new event on Google Calendar with title, date, time, attendees, reminders, and Google Meet link. Requires user confirmation.",
+        category: "system",
+        safetyLevel: "CONFIRM_REQUIRED",
+        parameters: [
+          { name: "summary", type: "string", description: "Title or summary of the event.", required: true },
+          { name: "start", type: "string", description: "Start time (ISO string) or date (YYYY-MM-DD).", required: true },
+          { name: "end", type: "string", description: "End time (ISO string) or date (YYYY-MM-DD).", required: false },
+          { name: "durationMinutes", type: "number", description: "Duration in minutes (default: 60).", required: false, default: 60 },
+          { name: "isAllDay", type: "boolean", description: "Whether this is an all-day event.", required: false, default: false },
+          { name: "description", type: "string", description: "Event description or notes.", required: false },
+          { name: "location", type: "string", description: "Event location.", required: false },
+          { name: "attendees", type: "array", description: "List of attendee names or email addresses.", required: false },
+          { name: "recurrence", type: "array", description: "Recurrence rules (RRULE).", required: false },
+          { name: "reminderMinutes", type: "number", description: "Reminder minutes before event (e.g. 15).", required: false, default: 15 },
+          { name: "createMeet", type: "boolean", description: "Whether to generate a Google Meet video conference link.", required: false, default: true },
+        ],
+      },
+      handler: async (args) => {
+        const reminders = args.reminderMinutes
+          ? { useDefault: false, overrides: [{ method: "popup" as const, minutes: Number(args.reminderMinutes) }] }
+          : undefined;
+        return await GoogleCalendarClient.createEvent({
+          summary: args.summary,
+          start: args.start,
+          end: args.end,
+          durationMinutes: args.durationMinutes,
+          isAllDay: Boolean(args.isAllDay),
+          description: args.description,
+          location: args.location,
+          attendees: args.attendees,
+          recurrence: args.recurrence,
+          reminders,
+          createMeet: args.createMeet !== false,
+        });
+      },
+    });
+
+    this.register({
+      definition: {
+        name: "calendar_update_event",
+        displayName: "Update Calendar Event",
+        description: "Updates an existing event on Google Calendar. Requires user confirmation.",
+        category: "system",
+        safetyLevel: "CONFIRM_REQUIRED",
+        parameters: [
+          { name: "eventId", type: "string", description: "The ID of the event to update.", required: true },
+          { name: "summary", type: "string", description: "Updated event title.", required: false },
+          { name: "start", type: "string", description: "Updated start time (ISO string).", required: false },
+          { name: "end", type: "string", description: "Updated end time (ISO string).", required: false },
+          { name: "durationMinutes", type: "number", description: "Updated duration in minutes.", required: false },
+          { name: "location", type: "string", description: "Updated location.", required: false },
+          { name: "description", type: "string", description: "Updated description.", required: false },
+          { name: "attendees", type: "array", description: "Updated attendees list.", required: false },
+          { name: "recurringScope", type: "string", description: "Recurring scope: 'this_occurrence' or 'all'.", required: false, default: "this_occurrence" },
+        ],
+      },
+      handler: async (args) => {
+        return await GoogleCalendarClient.updateEvent({
+          eventId: args.eventId,
+          summary: args.summary,
+          start: args.start,
+          end: args.end,
+          durationMinutes: args.durationMinutes,
+          location: args.location,
+          description: args.description,
+          attendees: args.attendees,
+          recurringScope: args.recurringScope,
+        });
+      },
+    });
+
+    this.register({
+      definition: {
+        name: "calendar_delete_event",
+        displayName: "Delete Calendar Event",
+        description: "Deletes an event from Google Calendar. Requires user confirmation.",
+        category: "system",
+        safetyLevel: "CONFIRM_REQUIRED",
+        parameters: [
+          { name: "eventId", type: "string", description: "ID of the event to delete.", required: true },
+          { name: "recurringScope", type: "string", description: "Recurring scope: 'this_occurrence' or 'all'.", required: false, default: "this_occurrence" },
+        ],
+      },
+      handler: async (args) => {
+        return await GoogleCalendarClient.deleteEvent(args.eventId, { recurringScope: args.recurringScope });
+      },
+    });
+
+    this.register({
+      definition: {
+        name: "calendar_duplicate_event",
+        displayName: "Duplicate Calendar Event",
+        description: "Duplicates an existing event onto a new date or time. Requires user confirmation.",
+        category: "system",
+        safetyLevel: "CONFIRM_REQUIRED",
+        parameters: [
+          { name: "eventId", type: "string", description: "ID of the event to duplicate.", required: true },
+          { name: "newStart", type: "string", description: "New start time (ISO string).", required: true },
+          { name: "newEnd", type: "string", description: "New end time (ISO string).", required: false },
+        ],
+      },
+      handler: async (args) => {
+        return await GoogleCalendarClient.duplicateEvent(args.eventId, args.newStart, args.newEnd);
+      },
+    });
+
+    this.register({
+      definition: {
+        name: "calendar_find_events",
+        displayName: "Find Calendar Events",
+        description: "Searches Google Calendar events by query text, attendee, or date.",
+        category: "system",
+        safetyLevel: "SAFE",
+        parameters: [
+          { name: "query", type: "string", description: "Search query text.", required: false },
+          { name: "date", type: "string", description: "Date to search (YYYY-MM-DD).", required: false },
+          { name: "attendee", type: "string", description: "Attendee name or email.", required: false },
+          { name: "maxResults", type: "number", description: "Maximum number of results.", required: false, default: 20 },
+        ],
+      },
+      handler: async (args) => {
+        return await GoogleCalendarClient.findEvents(args);
+      },
+    });
+
+    this.register({
+      definition: {
+        name: "calendar_check_conflicts",
+        displayName: "Check Calendar Conflicts",
+        description: "Checks for overlapping events in a time window and suggests alternative free slots.",
+        category: "system",
+        safetyLevel: "SAFE",
+        parameters: [
+          { name: "start", type: "string", description: "Start time (ISO string).", required: true },
+          { name: "end", type: "string", description: "End time (ISO string).", required: true },
+          { name: "excludeEventId", type: "string", description: "Event ID to exclude from conflict check.", required: false },
+        ],
+      },
+      handler: async (args) => {
+        return await GoogleCalendarClient.checkConflicts(args.start, args.end, args.excludeEventId);
       },
     });
   }

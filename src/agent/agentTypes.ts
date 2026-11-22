@@ -9,9 +9,11 @@ export type StepStatus = "pending" | "running" | "success" | "failed" | "retryin
 export type StepActionType =
   | "open_app"
   | "navigate"
+  | "create_tab"
   | "search_input"
   | "wait_results"
   | "open_first_result"
+  | "play_video"
   | "extract_price"
   | "report_result"
   | "generic";

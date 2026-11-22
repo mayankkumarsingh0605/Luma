@@ -1,6 +1,4 @@
 import os from "os";
-import { exec } from "child_process";
-import { promisify } from "util";
 import {
   WindowsBridge,
   type VisibleWindow,
@@ -13,8 +11,6 @@ import type {
   MousePosition,
   ActiveWindowInfo,
 } from "../types.js";
-
-const execAsync = promisify(exec);
 
 export class SystemController {
   /**
@@ -202,5 +198,41 @@ export class SystemController {
       timestamp: new Date().toISOString(),
       byteSize: Math.round((shot.base64.length * 3) / 4),
     };
+  }
+
+  /**
+   * Opens a web URL in the user's default browser as an independent detached process.
+   */
+  static async openUrl(url: string): Promise<{ success: boolean; error?: string }> {
+    if (!url || typeof url !== "string" || !url.startsWith("http")) {
+      return { success: false, error: "Invalid URL provided." };
+    }
+
+    if (process.env.NODE_ENV === "test") {
+      return { success: true };
+    }
+
+    try {
+      // Primary: WindowsBridge.runPowerShell with Start-Process
+      const script = `$url = ${JSON.stringify(url)}; Start-Process $url;`;
+      await WindowsBridge.runPowerShell(script);
+      return { success: true };
+    } catch (psErr: any) {
+      try {
+        const { spawn } = await import("child_process");
+        const child = spawn("cmd.exe", ["/c", "start", "", url], {
+          detached: true,
+          stdio: "ignore",
+          windowsHide: true,
+        });
+        child.unref();
+        return { success: true };
+      } catch (cmdErr: any) {
+        return {
+          success: false,
+          error: psErr?.message || cmdErr?.message || "Failed to open URL in default browser.",
+        };
+      }
+    }
   }
 }

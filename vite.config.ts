@@ -10,9 +10,17 @@ export default defineConfig({
     watch: {
       ignored: [
         "**/.chrome_profile/**",
+        "**/.luma_*",
+        "**/.luma_*/**",
         "**/scratch/**",
         "**/.git/**",
         "**/dist/**",
+        "**/server/**",
+        "**/tests/**",
+        "**/*.json",
+        "**/*.lock",
+        "**/*.db",
+        "**/*.sqlite*",
       ],
     },
     proxy: {

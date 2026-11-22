@@ -153,10 +153,15 @@ async function runTests() {
   // 5. Single-Instance Runtime Lock
   // ---------------------------------------------------------------------------
   console.log("\n--- 5. Single-Instance Runtime Lock ---");
+  const lockFile = path.resolve(process.cwd(), ".luma_runtime.lock");
+  const existingLock = fs.existsSync(lockFile) ? fs.readFileSync(lockFile, "utf-8") : null;
+  if (existingLock) {
+    try { fs.unlinkSync(lockFile); } catch {}
+  }
+
   const lockAcquired = await InstanceLockManager.acquireLock(3001);
   assert(lockAcquired.acquired === true, "Acquired single-instance lock for current process");
 
-  const lockFile = path.resolve(process.cwd(), ".luma_runtime.lock");
   assert(fs.existsSync(lockFile), "Lock file created on disk (.luma_runtime.lock)");
 
   const lockContent = JSON.parse(fs.readFileSync(lockFile, "utf-8"));
@@ -165,6 +170,11 @@ async function runTests() {
 
   InstanceLockManager.releaseLock();
   assert(!fs.existsSync(lockFile), "Lock file released and removed on clean exit");
+
+  // Restore previous lock if was present
+  if (existingLock) {
+    try { fs.writeFileSync(lockFile, existingLock, "utf-8"); } catch {}
+  }
 
   // ---------------------------------------------------------------------------
   // 6. Windows Startup Configuration

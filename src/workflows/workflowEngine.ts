@@ -7,6 +7,8 @@ import { executeFileWorkflow } from "./fileWorkflow.js";
 import { executeMediaWorkflow } from "./mediaWorkflow.js";
 import { executeCompoundWorkflow } from "./compoundWorkflow.js";
 import { executeYouTubeWorkflow } from "./youtubeWorkflow.js";
+import { executeCalendarWorkflow } from "./calendarWorkflow.js";
+import { BrowserAgent } from "../agent/browserAgent.js";
 import { ConfirmationManager } from "../confirmation/confirmationManager.js";
 import { ComputerStateManager } from "../state/computerState.js";
 
@@ -40,6 +42,131 @@ export class WorkflowEngine {
         const displayName = args.displayName || "Website";
 
         return await executeWebsiteOpenWorkflow(url, displayName, context);
+      }
+
+      // 2B. Tab Management
+      case "NEW_TAB": {
+        context.onProgress("Opening new browser tab...", "in-progress");
+        const res = await BrowserAgent.create_tab(args.url);
+        context.onProgress(res.message, res.success ? "completed" : "failed");
+        return { success: res.success, message: res.message, data: { url: res.url, index: res.index } };
+      }
+
+      case "LIST_TABS": {
+        context.onProgress("Listing open browser tabs...", "in-progress");
+        const res = await BrowserAgent.list_tabs();
+        context.onProgress(res.message, res.success ? "completed" : "failed");
+        return { success: res.success, message: res.message, data: res.tabs };
+      }
+
+      case "SWITCH_TAB": {
+        context.onProgress(`Switching to tab "${args.target}"...`, "in-progress");
+        const res = await BrowserAgent.switch_tab(args.target);
+        context.onProgress(res.message, res.success ? "completed" : "failed");
+        return { success: res.success, message: res.message, data: { url: res.url } };
+      }
+
+      case "CLOSE_TAB": {
+        context.onProgress("Closing browser tab...", "in-progress");
+        const res = await BrowserAgent.close_tab(args.target);
+        context.onProgress(res.message, res.success ? "completed" : "failed");
+        return { success: res.success, message: res.message };
+      }
+
+      // 2C. Page Observation & Content Reading
+      case "INSPECT_PAGE": {
+        context.onProgress("Observing webpage semantic structure...", "in-progress");
+        const data = await BrowserAgent.inspect_page();
+        if (data) {
+          context.onProgress("Page observed successfully", "completed");
+          return { success: true, message: `Inspected page: "${data.title}". Found ${data.headings?.length || 0} headings, ${data.inputs?.length || 0} inputs, ${data.buttons?.length || 0} buttons.`, data };
+        }
+        return { success: false, message: "Could not inspect active webpage." };
+      }
+
+      case "READ_PAGE_CONTENT": {
+        context.onProgress("Reading page content...", "in-progress");
+        const res = await BrowserAgent.read_page_content();
+        context.onProgress(res.success ? "Page content read" : "Failed to read content", res.success ? "completed" : "failed");
+        return { success: res.success, message: res.summary, data: res };
+      }
+
+      // 2D. Form Filling
+      case "FILL_FORM": {
+        context.onProgress("Inspecting and filling form fields...", "in-progress");
+        const res = await BrowserAgent.fill_form(args.data || {}, args.submit);
+        context.onProgress(res.message, res.success ? "completed" : "failed");
+        return { success: res.success, message: res.message, data: res };
+      }
+
+      // 2E. PDF & File Downloads
+      case "DOWNLOAD_FILE": {
+        const query = args.query || "pdf";
+        context.onProgress(`Detecting download for "${query}"...`, "in-progress");
+        const res = await BrowserAgent.download_file(query, args.targetDir);
+        context.onProgress(res.message, res.success ? "completed" : "failed");
+        return { success: res.success, message: res.message, data: res };
+      }
+
+      // 2F. Ranked Video Playback
+      case "PLAY_VIDEO_RANK": {
+        const rank = Number(args.rank) || 1;
+        context.onProgress(`Playing video #${rank}...`, "in-progress");
+        const res = await BrowserAgent.play_video_rank(rank);
+        context.onProgress(res.message, res.success ? "completed" : "failed");
+        return { success: res.success, message: res.message, data: res };
+      }
+
+      // 2G. Memory & Profile Operations
+      case "MEMORY_SAVE": {
+        let toolRes: any = null;
+        try {
+          const resp = await fetch("/api/computer/execute", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ tool: "memory_save", arguments: args }),
+          });
+          const d = await resp.json();
+          toolRes = d.result !== undefined ? d.result : d;
+        } catch (err: any) {
+          return { success: false, message: `Failed to save memory: ${err?.message || "Backend unreachable"}` };
+        }
+        return { success: toolRes?.success ?? false, message: toolRes?.message || "Memory saved.", data: toolRes };
+      }
+
+      case "MEMORY_REVIEW": {
+        let toolRes: any = null;
+        try {
+          const resp = await fetch("/api/computer/execute", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ tool: "memory_review", arguments: {} }),
+          });
+          const d = await resp.json();
+          toolRes = d.result !== undefined ? d.result : d;
+        } catch (err: any) {
+          return { success: false, message: `Failed to review memory: ${err?.message || "Backend unreachable"}` };
+        }
+        const summary = `Memory Review: ${toolRes?.profile?.length || 0} profile fields, ${toolRes?.longTermMemories?.length || 0} long-term memories stored.`;
+        return { success: true, message: summary, data: toolRes };
+      }
+
+      case "MEMORY_GET_PROFILE": {
+        let toolRes: any = null;
+        try {
+          const resp = await fetch("/api/computer/execute", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ tool: "memory_get_profile", arguments: {} }),
+          });
+          const d = await resp.json();
+          toolRes = d.result !== undefined ? d.result : d;
+        } catch (err: any) {
+          return { success: false, message: `Failed to get profile: ${err?.message || "Backend unreachable"}` };
+        }
+        const profileList = Array.isArray(toolRes) ? toolRes : [];
+        const profileLines = profileList.map((p: any) => `• ${p.key}: ${p.value}`).join("\n");
+        return { success: true, message: `User Profile:\n${profileLines}`, data: toolRes };
       }
 
       // 3. Application Control Workflows
@@ -142,11 +269,28 @@ export class WorkflowEngine {
 
       // 7B. YouTube Video Playback & Playlist Management
       case "PLAY_FIRST_RESULT":
+      case "PLAY_VIDEO_RANK":
+      case "YOUTUBE_SEEK":
+      case "YOUTUBE_GET_VIDEO_INFO":
+      case "YOUTUBE_GET_PLAYBACK_STATE":
+      case "YOUTUBE_SET_FULLSCREEN":
+      case "YOUTUBE_GET_FULLSCREEN_STATE":
+      case "YOUTUBE_SKIP_AD":
+      case "YOUTUBE_STOP":
       case "YOUTUBE_CREATE_PLAYLIST":
       case "YOUTUBE_ADD_TO_PLAYLIST":
       case "YOUTUBE_PLAY_PLAYLIST":
+      case "YOUTUBE_PLAY_PLAYLIST_VIDEO":
       case "YOUTUBE_OPEN_PLAYLIST":
-      case "YOUTUBE_REMOVE_FROM_PLAYLIST": {
+      case "YOUTUBE_REMOVE_FROM_PLAYLIST":
+      case "YOUTUBE_LIST_PLAYLIST_VIDEOS":
+      case "YOUTUBE_LIST_PLAYLISTS":
+      case "YOUTUBE_COUNT_PLAYLIST_VIDEOS":
+      case "YOUTUBE_RENAME_PLAYLIST":
+      case "YOUTUBE_UPDATE_PLAYLIST_PRIVACY":
+      case "YOUTUBE_SEARCH_AND_ADD_TO_PLAYLIST":
+      case "YOUTUBE_GET_PLAYLIST_DETAILS":
+      case "YOUTUBE_HELP_COMMANDS": {
         return await executeYouTubeWorkflow(intent, args, context);
       }
 
@@ -553,6 +697,26 @@ export class WorkflowEngine {
           context.onProgress("System communication error", "failed");
           return { success: false, message: "Could not retrieve system details.", error: err?.message };
         }
+      }
+
+      // 8B. Calendar Workflows (Phase 1 & Phase 2)
+      case "CALENDAR_AUTH_LOGIN":
+      case "CALENDAR_AUTH_STATUS":
+      case "CALENDAR_AUTH_LOGOUT":
+      case "CALENDAR_LIST_UPCOMING":
+      case "CALENDAR_NEXT_MEETING":
+      case "CALENDAR_LIST_TODAY":
+      case "CALENDAR_LIST_TOMORROW":
+      case "CALENDAR_LIST_WEEK":
+      case "CALENDAR_TIMEZONE":
+      case "CALENDAR_CREATE_EVENT":
+      case "CALENDAR_UPDATE_EVENT":
+      case "CALENDAR_DELETE_EVENT":
+      case "CALENDAR_DUPLICATE_EVENT":
+      case "CALENDAR_SEARCH_EVENTS":
+      case "CALENDAR_CHECK_AVAILABILITY":
+      case "CALENDAR_UPDATE_REMINDER_PREFERENCE": {
+        return await executeCalendarWorkflow(routed, context);
       }
 
       // 9. Hotkeys & Standard Editing

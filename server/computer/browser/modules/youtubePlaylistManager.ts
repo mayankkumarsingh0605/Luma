@@ -1,6 +1,3 @@
-import fs from "fs";
-import path from "path";
-
 export interface PlaylistVideo {
   title: string;
   url: string;
@@ -17,31 +14,19 @@ export interface LumaPlaylist {
   videos: PlaylistVideo[];
 }
 
+/**
+ * In-memory fallback playlist manager.
+ * NOTE: As per Phase 0 & Phase 1 requirements, the real YouTube account is the sole
+ * source of truth for playlists. Real operations execute via YouTubePlaylistService
+ * against the live YouTube web UI in .chrome_profile.
+ * This manager provides an in-memory session cache only (never writing to any
+ * local .json file on disk) to prevent Vite hot-reload and data-loss bugs.
+ */
 export class YouTubePlaylistManager {
-  private static readonly STORAGE_FILE = path.resolve(process.cwd(), ".luma_playlists.json");
-
-  private static readStorage(): Record<string, LumaPlaylist> {
-    try {
-      if (fs.existsSync(this.STORAGE_FILE)) {
-        const raw = fs.readFileSync(this.STORAGE_FILE, "utf-8");
-        return JSON.parse(raw);
-      }
-    } catch {
-      // Return empty if corrupted or unreadable
-    }
-    return {};
-  }
-
-  private static writeStorage(data: Record<string, LumaPlaylist>): void {
-    try {
-      fs.writeFileSync(this.STORAGE_FILE, JSON.stringify(data, null, 2), "utf-8");
-    } catch (err: any) {
-      console.error("[YouTubePlaylistManager] Error writing storage file:", err.message);
-    }
-  }
+  private static inMemoryStore = new Map<string, LumaPlaylist>();
 
   /**
-   * Creates a new playlist with the given name.
+   * Creates a new playlist with the given name in memory.
    */
   static async createPlaylist(name: string): Promise<LumaPlaylist> {
     const cleanName = name.trim();
@@ -49,11 +34,9 @@ export class YouTubePlaylistManager {
       throw new Error("Playlist name cannot be empty.");
     }
 
-    const storage = this.readStorage();
     const key = cleanName.toLowerCase();
-
-    if (storage[key]) {
-      return storage[key];
+    if (this.inMemoryStore.has(key)) {
+      return this.inMemoryStore.get(key)!;
     }
 
     const playlist: LumaPlaylist = {
@@ -64,8 +47,7 @@ export class YouTubePlaylistManager {
       videos: [],
     };
 
-    storage[key] = playlist;
-    this.writeStorage(storage);
+    this.inMemoryStore.set(key, playlist);
     return playlist;
   }
 
@@ -73,16 +55,14 @@ export class YouTubePlaylistManager {
    * Retrieves a playlist by name (case-insensitive).
    */
   static async getPlaylist(name: string): Promise<LumaPlaylist | undefined> {
-    const storage = this.readStorage();
-    return storage[name.trim().toLowerCase()];
+    return this.inMemoryStore.get(name.trim().toLowerCase());
   }
 
   /**
    * Returns all stored playlists.
    */
   static async getAllPlaylists(): Promise<LumaPlaylist[]> {
-    const storage = this.readStorage();
-    return Object.values(storage);
+    return Array.from(this.inMemoryStore.values());
   }
 
   /**
@@ -93,13 +73,12 @@ export class YouTubePlaylistManager {
     videos: Array<{ title: string; url: string; videoId?: string }>
   ): Promise<{ playlist: LumaPlaylist; addedCount: number; addedVideos: PlaylistVideo[] }> {
     const cleanName = playlistName.trim();
-    const storage = this.readStorage();
     const key = cleanName.toLowerCase();
 
-    let playlist = storage[key];
+    let playlist = this.inMemoryStore.get(key);
     if (!playlist) {
       playlist = await this.createPlaylist(cleanName);
-      storage[key] = playlist;
+      this.inMemoryStore.set(key, playlist);
     }
 
     const now = new Date().toISOString();
@@ -124,8 +103,7 @@ export class YouTubePlaylistManager {
     }
 
     playlist.updatedAt = now;
-    storage[key] = playlist;
-    this.writeStorage(storage);
+    this.inMemoryStore.set(key, playlist);
 
     return {
       playlist,
@@ -141,13 +119,12 @@ export class YouTubePlaylistManager {
     playlistName: string,
     identifier: string
   ): Promise<{ success: boolean; removedVideo?: PlaylistVideo; message: string }> {
-    const storage = this.readStorage();
     const key = playlistName.trim().toLowerCase();
-    let playlist = storage[key];
+    let playlist = this.inMemoryStore.get(key);
 
     // Generic fallback if user said "remove a video from a playlist" without specifying name
     if (!playlist && (key === "a playlist" || key === "playlist" || key === "the playlist")) {
-      const all = Object.values(storage).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+      const all = Array.from(this.inMemoryStore.values()).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
       if (all.length > 0) {
         playlist = all[0];
       }
@@ -201,8 +178,7 @@ export class YouTubePlaylistManager {
 
     const [removed] = playlist.videos.splice(removeIndex, 1);
     playlist.updatedAt = new Date().toISOString();
-    storage[key] = playlist;
-    this.writeStorage(storage);
+    this.inMemoryStore.set(key, playlist);
 
     return {
       success: true,
@@ -212,14 +188,12 @@ export class YouTubePlaylistManager {
   }
 
   /**
-   * Deletes an entire playlist.
+   * Deletes an entire playlist from in-memory cache.
    */
   static async deletePlaylist(name: string): Promise<boolean> {
-    const storage = this.readStorage();
     const key = name.trim().toLowerCase();
-    if (storage[key]) {
-      delete storage[key];
-      this.writeStorage(storage);
+    if (this.inMemoryStore.has(key)) {
+      this.inMemoryStore.delete(key);
       return true;
     }
     return false;

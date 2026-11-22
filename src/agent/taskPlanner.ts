@@ -8,11 +8,45 @@ import type { TaskPlan, TaskStep } from "./agentTypes.js";
  */
 export class TaskPlanner {
   /**
+   * Extracts search query directly and strictly from the user's command.
+   * Returns null if no explicit search query is present.
+   */
+  static extractSearchQuery(rawText: string): string | null {
+    const text = rawText.trim();
+    const searchMatch =
+      text.match(/(?:find|look\s+for)\s+([^,]+?)(?:\s+(?:on|in)\s+(?:amazon|flipkart|google|youtube)|,\s*(?:open|tell|play)|and\s+(?:open|tell|play)|\s+open|\s+tell|\s+play|$)/i) ||
+      text.match(/(?:(?:on|in)\s+(?:amazon|flipkart|google|youtube)\s+)?search\s+(?:on\s+|in\s+)?(?:amazon|flipkart|google|youtube)?\s*(?:for\s+)?([^,]+?)(?:,\s*(?:open|tell|play)|and\s+(?:open|tell|play)|\s+open|\s+tell|\s+play|$)/i) ||
+      text.match(/search\s+(?:amazon|flipkart|google|youtube)?\s*(?:for\s+)?([^,]+?)(?:,\s*(?:open|tell|play)|and\s+(?:open|tell|play)|\s+open|\s+tell|\s+play|$)/i) ||
+      text.match(/(?:amazon|flipkart|google|youtube)?\s*(?:pe|par|mein|me)\s+([^,]+?)\s+(?:search|dhundo)/i) ||
+      text.match(/(?:for\s+)([^,]+?)(?:,\s*(?:open|tell|play)|and\s+(?:open|tell|play)|\s+open|\s+tell|\s+play|$)/i) ||
+      text.match(/([a-zA-Z0-9\s]+?)\s+(?:search\s*karo|dhundo)/i);
+
+    if (searchMatch && searchMatch[1]) {
+      const candidate = searchMatch[1]
+        .replace(/^(?:for\s+|amazon\s+|flipkart\s+|google\s+|youtube\s+)/i, "")
+        .replace(/\b(?:on\s+amazon|on\s+flipkart|on\s+google|on\s+youtube|in\s+amazon|in\s+flipkart)\b/i, "")
+        .trim();
+      if (candidate.length > 0 && !candidate.startsWith("new tab") && !candidate.startsWith("tab")) {
+        return candidate;
+      }
+    }
+    return null;
+  }
+
+  /**
    * Determines if a user query represents a multi-step autonomous agent goal
    * (e.g. searching, opening results, extracting prices).
+   *
+   * Crucial rule: Never treats ordinary sequential navigation (e.g. "Open Chrome, open a new tab, and visit GitHub")
+   * as an autonomous search goal.
    */
   static isAgentGoal(rawText: string): boolean {
     const text = rawText.toLowerCase().trim();
+
+    // Playlist and calendar commands are handled deterministically by workflows/intents — never treat as search agent goals
+    if ((text.includes("playlist") || text.includes("watch later") || text.includes("calendar") || text.includes("meeting")) && !/(?:price|cost|buy)/i.test(text)) {
+      return false;
+    }
 
     // Check for price search goal: "search Amazon for ..., open the first result and tell me its price"
     const hasPriceGoal =
@@ -22,23 +56,19 @@ export class TaskPlanner {
     const hasFirstResult = /(?:first\s+result|first\s+product|pehla\s+result|pehla\s+product|open\s+(?:the\s+)?first)/i.test(text);
     const hasSearch = /(?:search|dhundo|find)/i.test(text);
 
-    if (hasPriceGoal || (hasFirstResult && hasSearch)) {
+    // Require an explicit extractable search query for agent search goals
+    const extractedQuery = this.extractSearchQuery(rawText);
+
+    if ((hasPriceGoal || (hasFirstResult && hasSearch)) && extractedQuery !== null) {
       return true;
     }
 
-    // Check for multi-step browser sequences with 3+ stages: "Open Chrome, search ..., open ..."
-    if (text.includes(",") && (text.includes("search") || text.includes("open"))) {
-      const parts = text.split(",").map((p) => p.trim()).filter(Boolean);
-      if (parts.length >= 3) {
-        return true;
-      }
-    }
-
-    // Check if both opening Chrome and searching and opening results are requested
+    // Check if both opening browser, searching with an explicit query, and acting on results are requested
     if (
       (text.includes("chrome") || text.includes("browser")) &&
       hasSearch &&
-      (hasFirstResult || hasPriceGoal || text.includes("result"))
+      extractedQuery !== null &&
+      (hasFirstResult || hasPriceGoal || text.includes("result") || text.includes("product"))
     ) {
       return true;
     }
@@ -47,15 +77,41 @@ export class TaskPlanner {
   }
 
   /**
-   * Plans a complex user goal into sequential TaskSteps.
+   * Validates a planned task before execution to guarantee every action is traceable.
    */
-  static planTask(userGoal: string): TaskPlan {
+  static validatePlan(plan: TaskPlan): { valid: boolean; error?: string } {
+    if (!plan || !plan.steps || plan.steps.length === 0) {
+      return { valid: false, error: "Plan contains no execution steps." };
+    }
+    for (const step of plan.steps) {
+      if (!step.goal || !step.actionType) {
+        return { valid: false, error: `Step #${step.step} is missing goal or actionType.` };
+      }
+      if (step.actionType === "search_input") {
+        const q = step.params?.query?.trim();
+        if (!q || q.length === 0) {
+          return { valid: false, error: `Step #${step.step} (search) is missing an explicit search query.` };
+        }
+      }
+      if (step.actionType === "navigate" && !step.params?.url) {
+        return { valid: false, error: `Step #${step.step} (navigate) is missing a target destination URL.` };
+      }
+    }
+    return { valid: true };
+  }
+
+  /**
+   * Plans a complex user goal into sequential TaskSteps strictly traceable to user instructions.
+   */
+  static planTask(userGoal: string, _context?: any): TaskPlan {
     const taskId = `task_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
     const text = userGoal.toLowerCase().trim();
 
     // Check if price extraction is requested
     const needsPrice =
       /(?:price|cost|price\s+batao|tell\s+me\s+its\s+price|price\s+kya\s+hai)/i.test(text);
+
+    const isTabGoal = text.includes("new tab") || text.includes("naya tab");
 
     // 1. Extract Target Site (Google, YouTube, Amazon, Flipkart, etc.)
     // DEFAULT IS ALWAYS GOOGLE FOR GENERAL SEARCHES — NEVER DEFAULT TO AMAZON
@@ -93,34 +149,33 @@ export class TaskPlanner {
       siteUrl = "https://www.amazon.in";
     }
 
-    // 2. Extract Query keyword (e.g. "wireless keyboards")
-    let query = "wireless keyboards";
-    const searchMatch =
-      text.match(/(?:(?:on|in)\s+(?:amazon|flipkart|google|youtube)\s+)?search\s+(?:on\s+|in\s+)?(?:amazon|flipkart|google|youtube)?\s*(?:for\s+)?([^,]+?)(?:,\s*(?:open|tell)|and\s+(?:open|tell)|\s+open|\s+tell|$)/i) ||
-      text.match(/search\s+(?:amazon|flipkart|google|youtube)?\s*(?:for\s+)?([^,]+?)(?:,\s*(?:open|tell)|and\s+(?:open|tell)|\s+open|\s+tell|$)/i) ||
-      text.match(/(?:amazon|flipkart|google|youtube)?\s*(?:pe|par|mein|me)\s+([^,]+?)\s+(?:search|dhundo)/i) ||
-      text.match(/(?:for\s+)([^,]+?)(?:,\s*(?:open|tell)|and\s+(?:open|tell)|\s+open|\s+tell|$)/i) ||
-      text.match(/([a-zA-Z0-9\s]+?)\s+(?:search\s*karo|dhundo)/i);
-
-    if (searchMatch && searchMatch[1]) {
-      const candidate = searchMatch[1]
-        .replace(/^(?:for\s+|amazon\s+|flipkart\s+|google\s+|youtube\s+)/i, "")
-        .replace(/\b(?:on\s+amazon|on\s+flipkart|on\s+google|on\s+youtube|in\s+amazon|in\s+flipkart)\b/i, "")
-        .trim();
-      if (candidate.length > 0) {
-        query = candidate;
-      }
+    // 2. Extract Query keyword strictly — NEVER default to invented queries
+    const query = this.extractSearchQuery(userGoal);
+    if (!query) {
+      throw new Error(`Task planning error: Could not extract a search query from "${userGoal}". Actions must be traceable to the user instruction.`);
     }
 
     // Build the high-level user goal steps
+    const firstStep: TaskStep = isTabGoal
+      ? {
+          step: 1,
+          goal: "Open a new tab in Chrome",
+          status: "pending",
+          actionType: "create_tab",
+          params: { url: siteUrl },
+        }
+      : {
+          step: 1,
+          goal: "Open Chrome",
+          status: "pending",
+          actionType: "open_app",
+          params: { app: "chrome" },
+        };
+
+    const isYouTubePlay = site === "youtube" && /(?:play|video|watch|song|1st|first)/i.test(text);
+
     const steps: TaskStep[] = [
-      {
-        step: 1,
-        goal: "Open Chrome",
-        status: "pending",
-        actionType: "open_app",
-        params: { app: "chrome" },
-      },
+      firstStep,
       {
         step: 2,
         goal: `Open ${siteDisplayName}`,
@@ -144,10 +199,10 @@ export class TaskPlanner {
       },
       {
         step: 5,
-        goal: "Open the first search result",
+        goal: isYouTubePlay ? "Play the first video" : "Open the first search result",
         status: "pending",
-        actionType: "open_first_result",
-        params: { query, site },
+        actionType: isYouTubePlay ? "play_video" : "open_first_result",
+        params: { query, site, rank: 1 },
       },
     ];
 

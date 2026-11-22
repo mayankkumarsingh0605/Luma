@@ -1,11 +1,14 @@
 /// <reference lib="dom" />
 import type { Page } from "playwright-core";
-import { BrowserSession } from "./browserSession.js";
+import { BrowserSession, type TabInfo } from "./browserSession.js";
 import { ModuleRegistry } from "./modules/moduleRegistry.js";
 import { YouTubeModule } from "./modules/youtubeModule.js";
 import type { ProductSearchResult, ExtractedPriceResult } from "./modules/types.js";
+import { PageObserver, type PageObservationSummary } from "./pageObserver.js";
+import { FormManager, type FormInspectionResult, type FormFillResult } from "./formManager.js";
+import { DownloadManager, type DownloadResult } from "./downloadManager.js";
 
-export type { ProductSearchResult, ExtractedPriceResult };
+export type { ProductSearchResult, ExtractedPriceResult, TabInfo, PageObservationSummary, FormInspectionResult, FormFillResult, DownloadResult };
 
 export class BrowserController {
   /**
@@ -93,8 +96,19 @@ export class BrowserController {
     error?: string;
   }> {
     try {
-      const page = await BrowserSession.getActivePage();
+      let page = await BrowserSession.getActivePage({ targetUrl: url });
       await BrowserSession.focusBrowser();
+
+      // Protected-Origin Guard: never navigate a LUMA application tab!
+      if (BrowserSession.isProtectedUrl(page.url())) {
+        console.warn(`[BrowserController] Protected-Origin Guard: Active page is LUMA application (${page.url()}). Creating a dedicated tab for ${url}.`);
+        const tab = await BrowserSession.createTab(url);
+        return {
+          success: true,
+          url: tab.url,
+          title: tab.title,
+        };
+      }
 
       await page.goto(url, { waitUntil: "domcontentloaded", timeout: 20000 });
 
@@ -143,8 +157,16 @@ export class BrowserController {
     }
 
     try {
-      const page = await BrowserSession.getActivePage();
+      let page = await BrowserSession.getActivePage({ targetUrl: siteKey });
       await BrowserSession.focusBrowser();
+
+      // Protected-Origin Guard
+      if (BrowserSession.isProtectedUrl(page.url())) {
+        console.warn(`[BrowserController] Protected-Origin Guard: Active page is LUMA application (${page.url()}). Spawning new tab.`);
+        const homeUrl = siteKey === "youtube" ? "https://www.youtube.com" : siteKey === "amazon" ? "https://www.amazon.in" : "https://www.google.com";
+        await BrowserSession.createTab(homeUrl);
+        page = await BrowserSession.getActivePage({ targetUrl: siteKey });
+      }
 
       // Resolve module with explicit siteKey taking precedence
       const mod = ModuleRegistry.resolve(siteKey, page.url());
@@ -419,60 +441,728 @@ export class BrowserController {
   }
 
   /**
-   * Creates a user playlist.
+   * Creates a user playlist on YouTube via UI.
    */
-  static async createPlaylist(name: string): Promise<any> {
-    const { YouTubePlaylistManager } = await import("./modules/youtubePlaylistManager.js");
-    return await YouTubePlaylistManager.createPlaylist(name);
+  static async createPlaylist(
+    name: string,
+    privacy: "PUBLIC" | "UNLISTED" | "PRIVATE" = "PRIVATE",
+    commandText?: string
+  ): Promise<any> {
+    const page = await BrowserSession.getActivePage();
+    const { YouTubePlaylistService } = await import("./modules/youtubePlaylistService.js");
+    return await YouTubePlaylistService.createPlaylist(page, name, privacy, commandText);
   }
 
   /**
-   * Adds videos to a user playlist.
+   * Creates a new user playlist seeded with a specific video using the authentic Save-to-playlist workflow.
+   */
+  static async createPlaylistFromVideo(
+    name: string,
+    privacy: "PUBLIC" | "UNLISTED" | "PRIVATE" = "PRIVATE",
+    videoContext?: any,
+    commandText?: string
+  ): Promise<any> {
+    const page = await BrowserSession.getActivePage();
+    const { YouTubePlaylistService } = await import("./modules/youtubePlaylistService.js");
+    return await YouTubePlaylistService.createPlaylistFromVideo(page, videoContext || null, name, privacy, commandText);
+  }
+
+  /**
+   * Plays a video by 1-based index from a YouTube playlist or advances to next video.
+   */
+  static async playPlaylistVideo(
+    nameOrUrl?: string,
+    index?: number,
+    next?: boolean,
+    commandText?: string
+  ): Promise<any> {
+    const page = await BrowserSession.getActivePage();
+    const { YouTubePlaylistService } = await import("./modules/youtubePlaylistService.js");
+    if (next) {
+      return await YouTubePlaylistService.playNextPlaylistVideo(page, commandText);
+    }
+    return await YouTubePlaylistService.playPlaylistVideo(page, nameOrUrl || "latest", index || 1, commandText);
+  }
+
+  /**
+   * Adds videos to a user playlist on YouTube via UI.
    */
   static async addVideosToPlaylist(
     playlistName: string,
-    videos: Array<{ title: string; url: string; videoId?: string }>
+    videos?: Array<{ title: string; url: string; videoId?: string }>,
+    limit: number = 3,
+    commandText?: string
   ): Promise<any> {
-    const { YouTubePlaylistManager } = await import("./modules/youtubePlaylistManager.js");
-    return await YouTubePlaylistManager.addVideosToPlaylist(playlistName, videos);
+    const page = await BrowserSession.getActivePage();
+    const { YouTubePlaylistService } = await import("./modules/youtubePlaylistService.js");
+    if (videos && videos.length > 0) {
+      let addedCount = 0;
+      const results = [];
+      for (const v of videos.slice(0, limit)) {
+        const res = await YouTubePlaylistService.addVideoToPlaylist(page, playlistName, v.url, commandText);
+        if (res.success) addedCount++;
+        results.push(res);
+      }
+      return {
+        success: addedCount > 0,
+        addedCount,
+        message: `Added ${addedCount} video(s) to playlist "${playlistName}".`,
+        results,
+      };
+    }
+    return await YouTubePlaylistService.addVideoToPlaylist(page, playlistName, undefined, commandText);
   }
 
   /**
-   * Plays a user playlist by name.
+   * Plays a user playlist by name or URL. If index is provided, starts playback of that specific video.
    */
-  static async playPlaylist(name: string): Promise<{ success: boolean; message: string; url?: string }> {
-    const { YouTubePlaylistManager } = await import("./modules/youtubePlaylistManager.js");
-    const playlist = await YouTubePlaylistManager.getPlaylist(name);
-    if (!playlist) {
+  static async playPlaylist(
+    nameOrUrl: string,
+    index?: number,
+    next?: boolean,
+    commandText?: string
+  ): Promise<{ success: boolean; message: string; url?: string; videoTitle?: string }> {
+    const page = await BrowserSession.getActivePage();
+    const { YouTubePlaylistService } = await import("./modules/youtubePlaylistService.js");
+    if (next) {
+      const res = await YouTubePlaylistService.playNextPlaylistVideo(page, commandText);
       return {
-        success: false,
-        message: `Playlist "${name}" not found.`,
+        success: res.success,
+        message: res.message,
+        url: res.videoUrl,
+        videoTitle: res.videoTitle,
       };
     }
-    const page = await BrowserSession.getActivePage();
-    const mod = ModuleRegistry.resolve("youtube", page.url());
-    if (mod instanceof YouTubeModule || "playPlaylist" in mod) {
-      return await (mod as any).playPlaylist(page, playlist);
-    }
+    const res = await YouTubePlaylistService.playPlaylistVideo(page, nameOrUrl, index || 1, commandText);
     return {
-      success: false,
-      message: "YouTube module required to play playlist.",
+      success: res.success,
+      message: res.message,
+      url: res.videoUrl || res.playlistUrl,
+      videoTitle: res.videoTitle,
     };
   }
 
   /**
    * Removes a video from a user playlist.
    */
-  static async removeVideoFromPlaylist(playlistName: string, identifier: string): Promise<any> {
-    const { YouTubePlaylistManager } = await import("./modules/youtubePlaylistManager.js");
-    return await YouTubePlaylistManager.removeVideoFromPlaylist(playlistName, identifier);
+  static async removeVideoFromPlaylist(
+    playlistName: string,
+    identifier: string,
+    confirmed: boolean = false,
+    commandText?: string
+  ): Promise<any> {
+    const page = await BrowserSession.getActivePage();
+    const { YouTubePlaylistService } = await import("./modules/youtubePlaylistService.js");
+    return await YouTubePlaylistService.removeVideoFromPlaylist(page, playlistName, identifier, confirmed, commandText);
   }
 
   /**
-   * Retrieves a playlist by name.
+   * Retrieves a playlist's video count and details.
    */
-  static async getPlaylist(name: string): Promise<any> {
-    const { YouTubePlaylistManager } = await import("./modules/youtubePlaylistManager.js");
-    return await YouTubePlaylistManager.getPlaylist(name);
+  static async getPlaylist(name: string, commandText?: string): Promise<any> {
+    const page = await BrowserSession.getActivePage();
+    const { YouTubePlaylistService } = await import("./modules/youtubePlaylistService.js");
+    return await YouTubePlaylistService.getPlaylistDetails(page, name, commandText);
+  }
+
+  /**
+   * Renames a YouTube playlist.
+   */
+  static async renamePlaylist(
+    oldNameOrUrl: string,
+    newName: string,
+    commandText?: string
+  ): Promise<any> {
+    const page = await BrowserSession.getActivePage();
+    const { YouTubePlaylistService } = await import("./modules/youtubePlaylistService.js");
+    return await YouTubePlaylistService.renamePlaylist(page, oldNameOrUrl, newName, commandText);
+  }
+
+  /**
+   * Updates privacy of a YouTube playlist.
+   */
+  static async updatePlaylistPrivacy(
+    nameOrUrl: string,
+    privacy: "PUBLIC" | "UNLISTED" | "PRIVATE",
+    commandText?: string
+  ): Promise<any> {
+    const page = await BrowserSession.getActivePage();
+    const { YouTubePlaylistService } = await import("./modules/youtubePlaylistService.js");
+    return await YouTubePlaylistService.updatePlaylistPrivacy(page, nameOrUrl, privacy, commandText);
+  }
+
+  /**
+   * Searches YouTube and adds the video at rank N to a playlist.
+   */
+  static async addSearchResultToPlaylist(
+    query: string,
+    rank: number = 1,
+    playlistName: string,
+    commandText?: string
+  ): Promise<any> {
+    const page = await BrowserSession.getActivePage();
+    const { YouTubePlaylistService } = await import("./modules/youtubePlaylistService.js");
+    return await YouTubePlaylistService.addSearchResultToPlaylist(page, query, rank, playlistName, commandText);
+  }
+
+  // ===========================================================================
+  // TAB MANAGEMENT
+  // ===========================================================================
+
+  /**
+   * Opens a new tab in the existing controlled Chrome session and optionally navigates to a URL.
+   */
+  static async createTab(url?: string): Promise<{
+    success: boolean;
+    index: number;
+    title: string;
+    url: string;
+    message: string;
+  }> {
+    try {
+      const res = await BrowserSession.createTab(url);
+      return {
+        success: true,
+        index: res.index,
+        title: res.title,
+        url: res.url,
+        message: `Opened new tab #${res.index}: "${res.title}" (${res.url}).`,
+      };
+    } catch (err: any) {
+      return {
+        success: false,
+        index: -1,
+        title: "",
+        url: url || "",
+        message: `Failed to open new tab: ${err?.message || "Unknown error"}`,
+      };
+    }
+  }
+
+  /**
+   * Lists all open tabs in the controlled browser session.
+   */
+  static async listTabs(): Promise<{ success: boolean; tabs: TabInfo[]; message: string }> {
+    try {
+      const tabs = await BrowserSession.listTabs();
+      return {
+        success: true,
+        tabs,
+        message: `Currently ${tabs.length} tab(s) open in controlled Chrome session.`,
+      };
+    } catch (err: any) {
+      return {
+        success: false,
+        tabs: [],
+        message: `Failed to list tabs: ${err?.message || "Unknown error"}`,
+      };
+    }
+  }
+
+  /**
+   * Switches to a specific tab by index or title/URL substring.
+   */
+  static async switchTab(target: number | string): Promise<{
+    success: boolean;
+    index: number;
+    title: string;
+    url: string;
+    message: string;
+  }> {
+    return await BrowserSession.switchTab(target);
+  }
+
+  /**
+   * Closes a specific tab, preserving other tabs.
+   */
+  static async closeTab(target?: number | string): Promise<{
+    success: boolean;
+    closedTitle: string;
+    remainingCount: number;
+    message: string;
+  }> {
+    return await BrowserSession.closeTab(target);
+  }
+
+  /**
+   * Returns active tab information.
+   */
+  static async getActiveTab(): Promise<{ index: number; title: string; url: string }> {
+    return await BrowserSession.getActiveTabInfo();
+  }
+
+  // ===========================================================================
+  // UNIVERSAL PAGE OBSERVATION & CONTENT EXTRACTION
+  // ===========================================================================
+
+  /**
+   * Performs semantic inspection of the active webpage DOM.
+   */
+  static async inspectPage(): Promise<PageObservationSummary> {
+    return await PageObserver.observePage();
+  }
+
+  /**
+   * Reads and summarizes visible text, headings, and search results on the active page.
+   */
+  static async readPageContent(): Promise<{
+    success: boolean;
+    title: string;
+    url: string;
+    summary: string;
+    headings: string[];
+    topSnippets: string[];
+    relevantLinks: Array<{ text: string; url: string }>;
+  }> {
+    return await PageObserver.readPageContent();
+  }
+
+  // ===========================================================================
+  // FORM INSPECTION & FILLING
+  // ===========================================================================
+
+  /**
+   * Inspects all form elements on the active page.
+   */
+  static async inspectForm(): Promise<FormInspectionResult> {
+    return await FormManager.inspectForm();
+  }
+
+  /**
+   * Fills form fields on the active page matching provided data or user profile.
+   */
+  static async fillForm(
+    data: Record<string, string> = {},
+    options: { submit?: boolean } = {}
+  ): Promise<FormFillResult> {
+    return await FormManager.fillForm(data, options);
+  }
+
+  // ===========================================================================
+  // PDF & FILE DOWNLOADS
+  // ===========================================================================
+
+  /**
+   * Detects and downloads requested file/PDF from the active webpage.
+   */
+  static async downloadFile(fileQuery: string = "pdf", targetDir?: string): Promise<DownloadResult> {
+    return await DownloadManager.downloadFile(fileQuery, targetDir);
+  }
+
+  // ===========================================================================
+  // ADVANCED YOUTUBE RANKED PLAYBACK & LIVE PLAYLISTS
+  // ===========================================================================
+
+  /**
+   * Plays the video at the given rank (1 = first, 2 = second, etc.) on YouTube.
+   */
+  static async playVideoByRank(
+    rank: number = 1,
+    siteKey?: string
+  ): Promise<{
+    success: boolean;
+    title?: string;
+    url?: string;
+    message: string;
+    isPlaying: boolean;
+    error?: string;
+  }> {
+    try {
+      const page = await BrowserSession.getActivePage();
+      const mod = ModuleRegistry.resolve(siteKey || "youtube", page.url());
+      if (mod instanceof YouTubeModule || "playVideoByRank" in mod) {
+        return await (mod as any).playVideoByRank(page, rank);
+      }
+      return {
+        success: false,
+        message: `Ranked video playback not supported on ${mod.displayName}.`,
+        isPlaying: false,
+      };
+    } catch (err: any) {
+      return {
+        success: false,
+        message: `Could not play video rank #${rank}: ${err?.message || "Unknown error"}`,
+        isPlaying: false,
+        error: err?.message,
+      };
+    }
+  }
+
+  /**
+   * Creates a playlist directly on YouTube web interface.
+   */
+  static async createPlaylistUI(
+    name: string,
+    privacy: "PUBLIC" | "UNLISTED" | "PRIVATE" = "PRIVATE"
+  ): Promise<{ success: boolean; message: string }> {
+    const page = await BrowserSession.getActivePage();
+    const mod = ModuleRegistry.resolve("youtube", page.url());
+    if (mod instanceof YouTubeModule || "createPlaylistUI" in mod) {
+      return await (mod as any).createPlaylistUI(page, name, privacy);
+    }
+    return { success: false, message: "YouTube module required for UI playlist creation." };
+  }
+
+  /**
+   * Adds the currently playing video to a playlist on YouTube via UI.
+   */
+  static async addCurrentVideoToPlaylistUI(
+    playlistName: string
+  ): Promise<{ success: boolean; message: string }> {
+    const page = await BrowserSession.getActivePage();
+    const mod = ModuleRegistry.resolve("youtube", page.url());
+    if (mod instanceof YouTubeModule || "addCurrentVideoToPlaylistUI" in mod) {
+      return await (mod as any).addCurrentVideoToPlaylistUI(page, playlistName);
+    }
+    return { success: false, message: "YouTube module required." };
+  }
+
+  /**
+   * Seeks video playback forward or backward by seconds.
+   */
+  static async seekVideo(
+    seconds: number,
+    siteKey?: string
+  ): Promise<{
+    success: boolean;
+    oldTime: number;
+    newTime: number;
+    duration: number;
+    message: string;
+    error?: string;
+  }> {
+    try {
+      const page = await BrowserSession.getActivePage();
+      const mod = ModuleRegistry.resolve(siteKey || "youtube", page.url());
+      if (mod instanceof YouTubeModule || "seek" in mod) {
+        return await (mod as any).seek(page, seconds);
+      }
+      return {
+        success: false,
+        oldTime: 0,
+        newTime: 0,
+        duration: 0,
+        message: `Seek not supported on ${mod.displayName}.`,
+      };
+    } catch (err: any) {
+      return {
+        success: false,
+        oldTime: 0,
+        newTime: 0,
+        duration: 0,
+        message: `Seek failed: ${err?.message || "Unknown error"}`,
+        error: err?.message,
+      };
+    }
+  }
+
+  /**
+   * Retrieves metadata of the currently playing video.
+   */
+  static async getVideoInfo(siteKey?: string): Promise<{
+    success: boolean;
+    title: string;
+    channel: string;
+    currentTime: number;
+    duration: number;
+    formattedProgress: string;
+    url: string;
+    message: string;
+  }> {
+    try {
+      const page = await BrowserSession.getActivePage();
+      const mod = ModuleRegistry.resolve(siteKey || "youtube", page.url());
+      if (mod instanceof YouTubeModule || "getVideoInfo" in mod) {
+        return await (mod as any).getVideoInfo(page);
+      }
+      return {
+        success: false,
+        title: "",
+        channel: "",
+        currentTime: 0,
+        duration: 0,
+        formattedProgress: "",
+        url: page.url(),
+        message: `Video metadata inspection not supported on ${mod.displayName}.`,
+      };
+    } catch (err: any) {
+      return {
+        success: false,
+        title: "",
+        channel: "",
+        currentTime: 0,
+        duration: 0,
+        formattedProgress: "",
+        url: "",
+        message: `Could not retrieve video info: ${err?.message || "Unknown error"}`,
+      };
+    }
+  }
+
+  /**
+   * Retrieves player playback state (PLAYING, PAUSED, BUFFERING, ENDED, ERROR, NO_VIDEO).
+   */
+  static async getPlaybackState(siteKey?: string): Promise<{
+    success: boolean;
+    state: "PLAYING" | "PAUSED" | "BUFFERING" | "ENDED" | "ERROR" | "NO_VIDEO";
+    currentTime: number;
+    duration: number;
+    percentPlayed: number;
+    isMuted: boolean;
+    volume: number;
+    message: string;
+  }> {
+    try {
+      const page = await BrowserSession.getActivePage();
+      const mod = ModuleRegistry.resolve(siteKey || "youtube", page.url());
+      if (mod instanceof YouTubeModule || "getPlaybackState" in mod) {
+        return await (mod as any).getPlaybackState(page);
+      }
+      return {
+        success: false,
+        state: "NO_VIDEO",
+        currentTime: 0,
+        duration: 0,
+        percentPlayed: 0,
+        isMuted: false,
+        volume: 0,
+        message: `Playback state not supported on ${mod.displayName}.`,
+      };
+    } catch (err: any) {
+      return {
+        success: false,
+        state: "ERROR",
+        currentTime: 0,
+        duration: 0,
+        percentPlayed: 0,
+        isMuted: false,
+        volume: 0,
+        message: `Could not detect playback state: ${err?.message || "Unknown error"}`,
+      };
+    }
+  }
+
+  /**
+   * Toggles or sets fullscreen mode for the active video.
+   */
+  static async setFullscreen(
+    enable?: boolean,
+    siteKey?: string
+  ): Promise<{ success: boolean; isFullscreen: boolean; message: string }> {
+    try {
+      const page = await BrowserSession.getActivePage();
+      const mod = ModuleRegistry.resolve(siteKey || "youtube", page.url());
+      if (mod instanceof YouTubeModule || "setFullscreen" in mod) {
+        return await (mod as any).setFullscreen(page, enable);
+      }
+      return {
+        success: false,
+        isFullscreen: false,
+        message: `Fullscreen control not supported on ${mod.displayName}.`,
+      };
+    } catch (err: any) {
+      return {
+        success: false,
+        isFullscreen: false,
+        message: `Fullscreen control failed: ${err?.message || "Unknown error"}`,
+      };
+    }
+  }
+
+  /**
+   * Stops video playback and resets time to 0.
+   */
+  static async stopVideo(siteKey?: string): Promise<{ success: boolean; message: string }> {
+    try {
+      const page = await BrowserSession.getActivePage();
+      const mod = ModuleRegistry.resolve(siteKey || "youtube", page.url());
+      if (mod instanceof YouTubeModule || "stopVideo" in mod) {
+        return await (mod as any).stopVideo(page);
+      }
+      return {
+        success: false,
+        message: `Stop video not supported on ${mod.displayName}.`,
+      };
+    } catch (err: any) {
+      return {
+        success: false,
+        message: `Stop video failed: ${err?.message || "Unknown error"}`,
+      };
+    }
+  }
+
+  /**
+   * Skips active advertisement if skippable.
+   */
+  static async skipAd(siteKey?: string): Promise<{
+    success: boolean;
+    isAd: boolean;
+    skipped?: boolean;
+    skippable?: boolean;
+    message: string;
+  }> {
+    try {
+      const page = await BrowserSession.getActivePage();
+      const mod = ModuleRegistry.resolve(siteKey || "youtube", page.url());
+      if (mod instanceof YouTubeModule || "skipAd" in mod) {
+        return await (mod as any).skipAd(page);
+      }
+      return {
+        success: false,
+        isAd: false,
+        message: `Ad skipping not supported on ${mod.displayName}.`,
+      };
+    } catch (err: any) {
+      return {
+        success: false,
+        isAd: false,
+        message: `Ad skip check failed: ${err?.message || "Unknown error"}`,
+      };
+    }
+  }
+
+  /**
+   * Opens playlist via YouTube UI.
+   */
+  static async openPlaylistUI(playlistNameOrUrl: string, commandText?: string): Promise<{
+    success: boolean;
+    url: string;
+    title: string;
+    message: string;
+    status?: string;
+    trace?: any;
+  }> {
+    const page = await BrowserSession.getActivePage();
+    const { YouTubePlaylistService } = await import("./modules/youtubePlaylistService.js");
+    const res = await YouTubePlaylistService.openPlaylist(page, playlistNameOrUrl, commandText);
+    return {
+      success: res.success,
+      url: res.playlistUrl || "",
+      title: res.playlistName || "",
+      message: res.message,
+      status: res.status,
+      trace: res.trace,
+    };
+  }
+
+  /**
+   * Lists all playlists in the user's logged-in YouTube account.
+   */
+  static async listPlaylists(commandText?: string): Promise<{
+    success: boolean;
+    playlists: any[];
+    message: string;
+    status?: string;
+    trace?: any;
+  }> {
+    const page = await BrowserSession.getActivePage();
+    const { YouTubePlaylistService } = await import("./modules/youtubePlaylistService.js");
+    return await YouTubePlaylistService.listPlaylists(page, commandText);
+  }
+
+  /**
+   * Counts videos in a YouTube playlist.
+   */
+  static async countPlaylistVideos(playlistNameOrUrl: string, commandText?: string): Promise<{
+    success: boolean;
+    count: number;
+    name: string;
+    url?: string;
+    message: string;
+    status?: string;
+    trace?: any;
+  }> {
+    const page = await BrowserSession.getActivePage();
+    const { YouTubePlaylistService } = await import("./modules/youtubePlaylistService.js");
+    const res = await YouTubePlaylistService.countPlaylistVideos(page, playlistNameOrUrl, commandText);
+    return {
+      success: res.success,
+      count: res.count,
+      name: playlistNameOrUrl,
+      url: res.url,
+      message: res.message,
+      status: res.status,
+      trace: res.trace,
+    };
+  }
+
+  /**
+   * Lists playlist videos via YouTube UI.
+   */
+  static async listPlaylistVideosUI(playlistNameOrUrl?: string, commandText?: string): Promise<{
+    success: boolean;
+    videos: Array<{ index: number; title: string; url: string }>;
+    message: string;
+    status?: string;
+    trace?: any;
+  }> {
+    const page = await BrowserSession.getActivePage();
+    const { YouTubePlaylistService } = await import("./modules/youtubePlaylistService.js");
+    return await YouTubePlaylistService.listPlaylistVideos(page, playlistNameOrUrl, commandText);
+  }
+
+  /**
+   * Removes video from playlist via YouTube UI.
+   */
+  static async removeVideoFromPlaylistUI(
+    playlistName: string,
+    videoIdentifier: string,
+    confirmed: boolean = false,
+    commandText?: string
+  ): Promise<{ success: boolean; requiresConfirmation?: boolean; message: string; status?: string; trace?: any }> {
+    const page = await BrowserSession.getActivePage();
+    const { YouTubePlaylistService } = await import("./modules/youtubePlaylistService.js");
+    return await YouTubePlaylistService.removeVideoFromPlaylist(page, playlistName, videoIdentifier, confirmed, commandText);
+  }
+
+  /**
+   * Retrieves active fullscreen status in the browser for YouTube.
+   */
+  static async getFullscreenState(siteKey?: string): Promise<{
+    success: boolean;
+    isFullscreen: boolean;
+    isVideoPlaying: boolean;
+    url: string;
+    message: string;
+  }> {
+    try {
+      const page = await BrowserSession.getActivePage();
+      const mod = ModuleRegistry.resolve(siteKey || "youtube", page.url());
+      if (mod instanceof YouTubeModule || "getFullscreenState" in mod) {
+        return await (mod as any).getFullscreenState(page);
+      }
+      return {
+        success: false,
+        isFullscreen: false,
+        isVideoPlaying: false,
+        url: page.url(),
+        message: `Fullscreen state inspection not supported on ${mod.displayName}.`,
+      };
+    } catch (err: any) {
+      return {
+        success: false,
+        isFullscreen: false,
+        isVideoPlaying: false,
+        url: "",
+        message: `Could not retrieve fullscreen state: ${err?.message || "Unknown error"}`,
+      };
+    }
+  }
+
+  /**
+   * Retrieves the supported YouTube commands catalog.
+   */
+  static async getYouTubeCommandsCatalog(category?: string): Promise<{
+    success: boolean;
+    catalog: string;
+    message: string;
+  }> {
+    const { formatYouTubeCommandsHelp } = await import("./modules/youtubeCommandCatalog.js");
+    const catalog = formatYouTubeCommandsHelp(category);
+    return {
+      success: true,
+      catalog,
+      message: "Retrieved YouTube commands catalog.",
+    };
   }
 }

@@ -340,6 +340,7 @@ function App() {
                   />
 
                   <button
+                    type="button"
                     onClick={handleSend}
                     disabled={!input.trim() || isLoading}
                     className="rounded-xl bg-white px-5 py-2.5 text-sm font-semibold text-black transition hover:bg-gray-200 disabled:cursor-not-allowed disabled:opacity-30 cursor-pointer shadow"

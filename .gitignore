@@ -17,7 +17,12 @@ dist-ssr
 .env.*
 !.env.example
 
-# Editor directories and files
+# Local SQLite & test data
+data/*.sqlite*
+data/test_downloads/
+data/.luma_calendar_key.dpapi
+data/*.dpapi
+
 .vscode/*
 !.vscode/extensions.json
 .idea

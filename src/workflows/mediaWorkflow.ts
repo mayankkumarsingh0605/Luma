@@ -11,7 +11,7 @@ export async function executeMediaWorkflow(
 ): Promise<WorkflowResult> {
   const cleanAction = action.toLowerCase().trim();
 
-  // 1. If play, pause, or resume, try direct browser in-tab video control first
+  // 1. If play, pause, resume, or stop, try direct browser in-tab video control first
   if (cleanAction === "pause" || cleanAction === "resume" || cleanAction === "play") {
     try {
       const browserRes = await BrowserAgent.control_playback(cleanAction as any);
@@ -24,6 +24,23 @@ export async function executeMediaWorkflow(
         return {
           success: true,
           message: browserRes.message,
+        };
+      }
+    } catch {
+      // Non-fatal, fallback to system media key
+    }
+  } else if (cleanAction === "stop") {
+    try {
+      const stopRes = await BrowserAgent.stop_video();
+      if (stopRes.success) {
+        context.onProgress(stopRes.message, "completed");
+        ComputerStateManager.update({
+          last_action: stopRes.message,
+          last_action_status: "success",
+        });
+        return {
+          success: true,
+          message: stopRes.message,
         };
       }
     } catch {

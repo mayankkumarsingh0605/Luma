@@ -379,22 +379,24 @@ export class BrowserAgent {
   }
 
   /**
-   * Creates a user playlist with a given name.
+   * Creates a user playlist with a given name and optional privacy.
    */
   static async create_playlist(
-    name: string
+    name: string,
+    privacy: "PUBLIC" | "UNLISTED" | "PRIVATE" = "PRIVATE"
   ): Promise<{ success: boolean; message: string; playlist?: any }> {
-    const res = await this.executeTool("youtube_create_playlist", { name });
-    if (res?.success) {
+    const res = await this.executeTool("youtube_create_playlist", { name, privacy });
+    const isOk = res?.success && (res.result ? res.result.success !== false : true);
+    if (isOk) {
       return {
         success: true,
-        message: `Playlist "${name}" created successfully.`,
+        message: res.result?.message || `Playlist "${name}" created successfully.`,
         playlist: res.result,
       };
     }
     return {
       success: false,
-      message: res?.error || `Could not create playlist "${name}".`,
+      message: res?.result?.message || res?.error || `Could not create playlist "${name}".`,
     };
   }
 
@@ -429,20 +431,78 @@ export class BrowserAgent {
    * Plays a playlist by name.
    */
   static async play_playlist(
-    name: string
-  ): Promise<{ success: boolean; message: string; url?: string }> {
-    const res = await this.executeTool("youtube_play_playlist", { name });
+    name: string,
+    index?: number,
+    next?: boolean
+  ): Promise<{ success: boolean; message: string; url?: string; videoTitle?: string }> {
+    const res = await this.executeTool("youtube_play_playlist", { name, index, next });
     const isOk = res?.success && (res.result ? res.result.success !== false : true);
     if (isOk) {
       return {
         success: true,
         message: res.result?.message || `Playing playlist "${name}".`,
         url: res.result?.url,
+        videoTitle: res.result?.videoTitle,
       };
     }
     return {
       success: false,
       message: res?.result?.message || res?.error || `Could not play playlist "${name}".`,
+    };
+  }
+
+  /**
+   * Plays a video by 1-based index from a YouTube playlist or advances to next video.
+   */
+  static async play_playlist_video(
+    playlistName?: string,
+    index?: number,
+    next?: boolean
+  ): Promise<{ success: boolean; message: string; url?: string; videoTitle?: string }> {
+    const res = await this.executeTool("youtube_play_playlist_video", {
+      playlist_name: playlistName,
+      index: index || 1,
+      next: Boolean(next),
+    });
+    const isOk = res?.success && (res.result ? res.result.success !== false : true);
+    if (isOk) {
+      return {
+        success: true,
+        message: res.result?.message || `Playing video from playlist "${playlistName || "current"}".`,
+        url: res.result?.videoUrl || res.result?.url,
+        videoTitle: res.result?.videoTitle,
+      };
+    }
+    return {
+      success: false,
+      message: res?.result?.message || res?.error || `Could not play video from playlist "${playlistName}".`,
+    };
+  }
+
+  /**
+   * Creates a playlist seeded with a video using the authentic Save-to-playlist workflow.
+   */
+  static async create_playlist_from_video(
+    name: string,
+    privacy: "PUBLIC" | "UNLISTED" | "PRIVATE" = "PRIVATE",
+    videoContext?: any
+  ): Promise<{ success: boolean; message: string; playlist?: any }> {
+    const res = await this.executeTool("youtube_create_playlist_from_video", {
+      name,
+      privacy,
+      video_context: videoContext,
+    });
+    const isOk = res?.success && (res.result ? res.result.success !== false : true);
+    if (isOk) {
+      return {
+        success: true,
+        message: res.result?.message || `Playlist "${name}" created successfully.`,
+        playlist: res.result,
+      };
+    }
+    return {
+      success: false,
+      message: res?.result?.message || res?.error || `Could not create playlist "${name}".`,
     };
   }
 
@@ -490,6 +550,460 @@ export class BrowserAgent {
     return {
       success: false,
       message: `Playlist "${name}" not found.`,
+    };
+  }
+
+  /**
+   * Opens a new tab in the existing controlled Chrome session and optionally navigates to a URL.
+   */
+  static async create_tab(url?: string): Promise<{ success: boolean; message: string; url?: string; index?: number }> {
+    const res = await this.executeTool("browser_new_tab", { url });
+    const isOk = res?.success && (res.result ? res.result.success !== false : true);
+    if (isOk) {
+      return {
+        success: true,
+        message: res.result?.message || `Opened new tab: ${url || ""}`,
+        url: res.result?.url,
+        index: res.result?.index,
+      };
+    }
+    return {
+      success: false,
+      message: res?.result?.message || res?.error || "Failed to open new tab.",
+    };
+  }
+
+  /**
+   * Lists all open tabs in the controlled browser context.
+   */
+  static async list_tabs(): Promise<{ success: boolean; tabs: any[]; message: string }> {
+    const res = await this.executeTool("browser_list_tabs", {});
+    if (res?.success && res.result) {
+      return res.result;
+    }
+    return {
+      success: false,
+      tabs: [],
+      message: res?.error || "Failed to list tabs.",
+    };
+  }
+
+  /**
+   * Switches to an open browser tab by index or title/URL matching.
+   */
+  static async switch_tab(target: number | string): Promise<{ success: boolean; message: string; url?: string }> {
+    const res = await this.executeTool("browser_switch_tab", { target });
+    const isOk = res?.success && (res.result ? res.result.success !== false : true);
+    if (isOk) {
+      return {
+        success: true,
+        message: res.result?.message || `Switched to tab "${target}".`,
+        url: res.result?.url,
+      };
+    }
+    return {
+      success: false,
+      message: res?.result?.message || res?.error || `Could not switch to tab "${target}".`,
+    };
+  }
+
+  /**
+   * Closes a specific tab or active tab.
+   */
+  static async close_tab(target?: number | string): Promise<{ success: boolean; message: string }> {
+    const res = await this.executeTool("browser_close_tab", { target });
+    const isOk = res?.success && (res.result ? res.result.success !== false : true);
+    if (isOk) {
+      return {
+        success: true,
+        message: res.result?.message || "Closed browser tab.",
+      };
+    }
+    return {
+      success: false,
+      message: res?.result?.message || res?.error || "Failed to close tab.",
+    };
+  }
+
+  /**
+   * Semantically inspects the active webpage DOM.
+   */
+  static async inspect_page(): Promise<any> {
+    const res = await this.executeTool("browser_inspect_page", {});
+    return res?.result || null;
+  }
+
+  /**
+   * Reads and summarizes visible text, headings, and search results on the active page.
+   */
+  static async read_page_content(): Promise<{
+    success: boolean;
+    title: string;
+    url: string;
+    summary: string;
+    headings: string[];
+    topSnippets: string[];
+  }> {
+    const res = await this.executeTool("browser_read_page_content", {});
+    if (res?.success && res.result) {
+      return res.result;
+    }
+    return {
+      success: false,
+      title: "",
+      url: "",
+      summary: res?.error || "Could not read page content.",
+      headings: [],
+      topSnippets: [],
+    };
+  }
+
+  /**
+   * Inspects form fields on the active page.
+   */
+  static async inspect_form(): Promise<any> {
+    const res = await this.executeTool("browser_inspect_form", {});
+    return res?.result || null;
+  }
+
+  /**
+   * Fills form fields on the active page matching provided data or user profile data.
+   */
+  static async fill_form(
+    data: Record<string, string> = {},
+    submit: boolean = false
+  ): Promise<{ success: boolean; message: string; filledFields?: any[]; requiresConfirmation?: boolean }> {
+    const res = await this.executeTool("browser_fill_form", { data, submit });
+    if (res?.success && res.result) {
+      return {
+        success: res.result.success,
+        message: res.result.message,
+        filledFields: res.result.filledFields,
+        requiresConfirmation: res.result.requiresConfirmationBeforeSubmit,
+      };
+    }
+    return {
+      success: false,
+      message: res?.error || "Failed to fill form fields.",
+    };
+  }
+
+  /**
+   * Downloads a document or PDF from the active page.
+   */
+  static async download_file(
+    query: string = "pdf",
+    targetDir?: string
+  ): Promise<{ success: boolean; filename?: string; savedPath?: string; message: string }> {
+    const res = await this.executeTool("browser_download_file", { query, targetDir });
+    if (res?.success && res.result) {
+      return res.result;
+    }
+    return {
+      success: false,
+      message: res?.error || "Failed to download file.",
+    };
+  }
+
+  /**
+   * Plays the video at the given rank (1 = first, 2 = second, etc.) on YouTube.
+   */
+  static async play_video_rank(
+    rank: number = 1
+  ): Promise<{ success: boolean; title?: string; url?: string; message: string }> {
+    const res = await this.executeTool("browser_play_video_rank", { rank });
+    const isOk = res?.success && (res.result ? res.result.success !== false : true);
+    if (isOk) {
+      return {
+        success: true,
+        title: res.result?.title,
+        url: res.result?.url,
+        message: res.result?.message || `Playing video #${rank}.`,
+      };
+    }
+    return {
+      success: false,
+      message: res?.result?.message || res?.error || `Could not play video #${rank}.`,
+    };
+  }
+
+  /**
+   * Seeks the video forward (+) or backward (-) by seconds.
+   */
+  static async seek_video(
+    seconds: number
+  ): Promise<{ success: boolean; message: string; details?: any }> {
+    const res = await this.executeTool("youtube_seek", { seconds });
+    const isOk = res?.success && (res.result ? res.result.success !== false : true);
+    return {
+      success: isOk,
+      message: res?.result?.message || res?.error || `Could not seek video.`,
+      details: res?.result,
+    };
+  }
+
+  /**
+   * Retrieves active video info.
+   */
+  static async get_video_info(): Promise<{
+    success: boolean;
+    message: string;
+    info?: any;
+  }> {
+    const res = await this.executeTool("youtube_get_video_info", {});
+    const isOk = res?.success && (res.result ? res.result.success !== false : true);
+    return {
+      success: isOk,
+      message: res?.result?.message || res?.error || "Could not retrieve video info.",
+      info: res?.result,
+    };
+  }
+
+  /**
+   * Retrieves playback state.
+   */
+  static async get_playback_state(): Promise<{
+    success: boolean;
+    message: string;
+    state?: any;
+  }> {
+    const res = await this.executeTool("youtube_get_playback_state", {});
+    const isOk = res?.success && (res.result ? res.result.success !== false : true);
+    return {
+      success: isOk,
+      message: res?.result?.message || res?.error || "Could not get playback state.",
+      state: res?.result,
+    };
+  }
+
+  /**
+   * Toggles or sets fullscreen mode.
+   */
+  static async set_fullscreen(
+    enable?: boolean
+  ): Promise<{ success: boolean; isFullscreen: boolean; message: string }> {
+    const res = await this.executeTool("youtube_set_fullscreen", { enable });
+    const isOk = res?.success && (res.result ? res.result.success !== false : true);
+    return {
+      success: isOk,
+      isFullscreen: Boolean(res?.result?.isFullscreen),
+      message: res?.result?.message || res?.error || "Could not change fullscreen state.",
+    };
+  }
+
+  /**
+   * Stops video playback and resets time.
+   */
+  static async stop_video(): Promise<{ success: boolean; message: string }> {
+    const res = await this.executeTool("youtube_stop_video", {});
+    const isOk = res?.success && (res.result ? res.result.success !== false : true);
+    return {
+      success: isOk,
+      message: res?.result?.message || res?.error || "Could not stop video playback.",
+    };
+  }
+
+  /**
+   * Skips active advertisement.
+   */
+  static async skip_ad(): Promise<{
+    success: boolean;
+    isAd: boolean;
+    skipped?: boolean;
+    skippable?: boolean;
+    message: string;
+  }> {
+    const res = await this.executeTool("youtube_skip_ad", {});
+    const isOk = res?.success && (res.result ? res.result.success !== false : true);
+    return {
+      success: isOk,
+      isAd: Boolean(res?.result?.isAd),
+      skipped: res?.result?.skipped,
+      skippable: res?.result?.skippable,
+      message: res?.result?.message || res?.error || "Could not skip ad.",
+    };
+  }
+
+  /**
+   * Opens playlist in YouTube UI.
+   */
+  static async open_playlist_ui(
+    name: string
+  ): Promise<{ success: boolean; message: string; url?: string; title?: string }> {
+    const res = await this.executeTool("youtube_open_playlist_ui", { name });
+    const isOk = res?.success && (res.result ? res.result.success !== false : true);
+    return {
+      success: isOk,
+      message: res?.result?.message || res?.error || `Could not open playlist "${name}".`,
+      url: res?.result?.url,
+      title: res?.result?.title,
+    };
+  }
+
+  /**
+   * Lists playlist videos via YouTube UI.
+   */
+  static async list_playlist_videos_ui(
+    name?: string
+  ): Promise<{ success: boolean; videos?: any[]; message: string }> {
+    const res = await this.executeTool("youtube_list_playlist_videos_ui", { name });
+    const isOk = res?.success && (res.result ? res.result.success !== false : true);
+    return {
+      success: isOk,
+      videos: res?.result?.videos || [],
+      message: res?.result?.message || res?.error || "Could not list playlist videos.",
+    };
+  }
+
+  /**
+   * Removes video from playlist via YouTube UI.
+   */
+  static async remove_video_from_playlist_ui(
+    playlistName: string,
+    video: string,
+    confirmed?: boolean
+  ): Promise<{ success: boolean; message: string; requiresConfirmation?: boolean }> {
+    const res = await this.executeTool("youtube_remove_from_playlist_ui", {
+      playlist_name: playlistName,
+      video,
+      confirmed,
+    });
+    const isOk = res?.success && (res.result ? res.result.success !== false : true);
+    return {
+      success: isOk,
+      message: res?.result?.message || res?.error || `Could not remove video from playlist "${playlistName}".`,
+      requiresConfirmation: res?.result?.requiresConfirmation,
+    };
+  }
+
+  /**
+   * Queries active fullscreen state.
+   */
+  static async get_fullscreen_state(
+    site?: string
+  ): Promise<{ success: boolean; isFullscreen: boolean; isVideoPlaying: boolean; message: string }> {
+    const res = await this.executeTool("youtube_get_fullscreen_state", { site });
+    const isOk = res?.success && (res.result ? res.result.success !== false : true);
+    return {
+      success: isOk,
+      isFullscreen: Boolean(res?.result?.isFullscreen),
+      isVideoPlaying: Boolean(res?.result?.isVideoPlaying),
+      message: res?.result?.message || res?.error || "Could not retrieve fullscreen state.",
+    };
+  }
+
+  /**
+   * Lists all playlists in user's account.
+   */
+  static async list_playlists(): Promise<{ success: boolean; playlists?: any[]; message: string }> {
+    const res = await this.executeTool("youtube_list_playlists", {});
+    const isOk = res?.success && (res.result ? res.result.success !== false : true);
+    return {
+      success: isOk,
+      playlists: res?.result?.playlists || [],
+      message: res?.result?.message || res?.error || "Could not list playlists.",
+    };
+  }
+
+  /**
+   * Counts videos in a playlist.
+   */
+  static async count_playlist_videos(
+    playlistName: string
+  ): Promise<{ success: boolean; count: number; name: string; url?: string; message: string }> {
+    const res = await this.executeTool("youtube_count_playlist_videos", { playlist_name: playlistName });
+    const isOk = res?.success && (res.result ? res.result.success !== false : true);
+    return {
+      success: isOk,
+      count: res?.result?.count || 0,
+      name: res?.result?.name || playlistName,
+      url: res?.result?.url,
+      message: res?.result?.message || res?.error || `Could not count videos in playlist "${playlistName}".`,
+    };
+  }
+
+  /**
+   * Renames a YouTube playlist.
+   */
+  static async rename_playlist(
+    oldName: string,
+    newName: string
+  ): Promise<{ success: boolean; message: string; playlistName?: string }> {
+    const res = await this.executeTool("youtube_rename_playlist", { old_name: oldName, new_name: newName });
+    const isOk = res?.success && (res.result ? res.result.success !== false : true);
+    return {
+      success: isOk,
+      message: res?.result?.message || res?.error || `Could not rename playlist "${oldName}".`,
+      playlistName: res?.result?.playlistName || newName,
+    };
+  }
+
+  /**
+   * Updates playlist visibility/privacy.
+   */
+  static async update_playlist_privacy(
+    playlistName: string,
+    privacy: "PUBLIC" | "UNLISTED" | "PRIVATE"
+  ): Promise<{ success: boolean; message: string; privacy?: string }> {
+    const res = await this.executeTool("youtube_update_playlist_privacy", {
+      playlist_name: playlistName,
+      privacy,
+    });
+    const isOk = res?.success && (res.result ? res.result.success !== false : true);
+    return {
+      success: isOk,
+      message: res?.result?.message || res?.error || `Could not update privacy of "${playlistName}".`,
+      privacy: res?.result?.privacy || privacy,
+    };
+  }
+
+  /**
+   * Searches YouTube and adds video at rank N to a playlist.
+   */
+  static async add_search_result_to_playlist(
+    query: string,
+    rank: number = 1,
+    playlistName: string
+  ): Promise<{ success: boolean; message: string }> {
+    const res = await this.executeTool("youtube_add_search_result_to_playlist", {
+      query,
+      rank,
+      playlist_name: playlistName,
+    });
+    const isOk = res?.success && (res.result ? res.result.success !== false : true);
+    return {
+      success: isOk,
+      message: res?.result?.message || res?.error || `Could not add search result to playlist "${playlistName}".`,
+    };
+  }
+
+  /**
+   * Retrieves comprehensive playlist details.
+   */
+  static async get_playlist_details(
+    name: string
+  ): Promise<{ success: boolean; message: string; details?: any }> {
+    const res = await this.executeTool("youtube_get_playlist_details", { name });
+    const isOk = res?.success && (res.result ? res.result.success !== false : true);
+    return {
+      success: isOk,
+      message: res?.result?.message || res?.error || `Could not retrieve details for playlist "${name}".`,
+      details: res?.result,
+    };
+  }
+
+  /**
+   * Retrieves YouTube commands help and usage catalog.
+   */
+  static async get_youtube_commands_help(
+    category?: string
+  ): Promise<{ success: boolean; catalog: string; message: string }> {
+    const res = await this.executeTool("youtube_help_commands", { category });
+    const isOk = res?.success && (res.result ? res.result.success !== false : true);
+    return {
+      success: isOk,
+      catalog: res?.result?.catalog || "",
+      message: res?.result?.message || res?.error || "Could not retrieve YouTube commands.",
     };
   }
 }

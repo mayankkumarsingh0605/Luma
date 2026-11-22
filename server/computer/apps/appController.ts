@@ -352,7 +352,6 @@ export class AppController {
     const activeTitle = (active.title || "").toLowerCase();
 
     const cleanA = appA.toLowerCase();
-    const cleanB = appB.toLowerCase();
 
     // Check if appA is currently active
     const isAActive = activeProc.includes(cleanA) || activeTitle.includes(cleanA);

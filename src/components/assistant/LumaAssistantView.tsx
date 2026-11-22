@@ -11,15 +11,42 @@ interface LumaAssistantViewProps {
   onOpenDeveloperTools?: () => void;
 }
 
+const STORAGE_KEY = "luma_conversation_history_v1";
+
 export const LumaAssistantView: React.FC<LumaAssistantViewProps> = ({
   onOpenDeveloperTools,
 }) => {
-  const [commands, setCommands] = useState<UserCommand[]>([]);
+  const [commands, setCommands] = useState<UserCommand[]>(() => {
+    try {
+      if (typeof window !== "undefined") {
+        const saved = localStorage.getItem(STORAGE_KEY);
+        if (saved) {
+          const parsed = JSON.parse(saved);
+          if (Array.isArray(parsed)) return parsed;
+        }
+      }
+    } catch (e) {
+      console.error("[LUMA] Failed to load saved conversation history:", e);
+    }
+    return [];
+  });
+
   const [status, setStatus] = useState<CommandStatus>("idle");
   const [statusText, setStatusText] = useState("LUMA is ready");
   const [showVoiceSettings, setShowVoiceSettings] = useState(false);
   const [startupEnabled, setStartupEnabled] = useState(false);
   const chatBottomRef = useRef<HTMLDivElement>(null);
+
+  // Synchronize conversation history to localStorage on updates
+  useEffect(() => {
+    try {
+      if (typeof window !== "undefined") {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(commands.slice(-100)));
+      }
+    } catch (e) {
+      console.error("[LUMA] Failed to save conversation history:", e);
+    }
+  }, [commands]);
 
   // Hook into live Always-On voice assistant
   const {
@@ -261,6 +288,23 @@ export const LumaAssistantView: React.FC<LumaAssistantViewProps> = ({
             </span>
           </button>
 
+          {/* Clear History Button */}
+          {commands.length > 0 && (
+            <button
+              type="button"
+              onClick={() => {
+                setCommands([]);
+                try {
+                  localStorage.removeItem(STORAGE_KEY);
+                } catch {}
+              }}
+              className="flex h-7 items-center gap-1.5 rounded-lg border border-white/10 bg-white/5 px-2 text-[11px] text-gray-400 hover:text-white hover:bg-white/10 transition cursor-pointer"
+              title="Clear conversation history"
+            >
+              <span>Clear</span>
+            </button>
+          )}
+
           {/* Settings Toggle Button */}
           <button
             type="button"
@@ -477,6 +521,20 @@ export const LumaAssistantView: React.FC<LumaAssistantViewProps> = ({
                               ? "Understanding your command..."
                               : "Command registered.")}
                         </p>
+                      )}
+
+                      {cmd.data?.url && (
+                        <div className="mt-3">
+                          <a
+                            href={cmd.data.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex items-center gap-2 rounded-xl bg-emerald-500/15 border border-emerald-500/30 px-4 py-2.5 text-xs font-semibold text-emerald-300 hover:bg-emerald-500 hover:text-white transition cursor-pointer shadow-md active:scale-95"
+                          >
+                            <span>🔗</span>
+                            <span>Open Google Authorization</span>
+                          </a>
+                        </div>
                       )}
 
                       {/* Autonomous Agent Execution Panel if taskPlan is present */}

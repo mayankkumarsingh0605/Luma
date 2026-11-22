@@ -39,6 +39,8 @@ export function stripConversationalPrefixes(text: string): string {
   cleaned = cleaned.replace(/^(?:please|kindly|kripya)\s+/i, "");
   cleaned = cleaned.replace(/^(?:i\s+want\s+(?:you\s+)?to\s+|i\s+need\s+(?:you\s+)?to\s+|help\s+me\s+)/i, "");
   cleaned = cleaned.replace(/^(?:zara\s+)/i, "");
+  // Hindi / Hinglish possessive prefixes (e.g. "mere upcoming meetings", "meri meetings")
+  cleaned = cleaned.replace(/^(?:mere|meri|mera|hamare|hamari|hamara)\s+/i, "");
   // Polite suffix
   cleaned = cleaned.replace(/\s+(?:for\s+me|please|kripya)$/i, "");
   cleaned = cleaned.replace(/[.?!]+$/g, "").trim();
@@ -82,32 +84,42 @@ export function normalizeCommand(rawText: string): string {
 export function splitCompoundCommand(rawText: string): string[] {
   if (!rawText || typeof rawText !== "string") return [];
 
-  const normalized = basicNormalize(rawText);
+  // Strip conversational assistant prefixes first (e.g. "Luma, ...", "Hey Luma, ...")
+  const stripped = stripConversationalPrefixes(rawText);
+  const rawClean = stripped.trim().replace(/\.(?:\s+|$)/g, " ");
 
   // 1. Non-compound exceptions: phrases containing 'and' that represent single atomic intents
   // A. "switch between X and Y" / "toggle between X and Y"
-  if (/^(?:switch|toggle|alternate)\s+between\s+.+?\s+(?:and|&)\s+.+$/i.test(normalized)) {
-    return [normalized];
+  const normalizedForCheck = basicNormalize(stripped);
+  if (/^(?:switch|toggle|alternate)\s+between\s+.+?\s+(?:and|&)\s+.+$/i.test(normalizedForCheck)) {
+    return [normalizedForCheck];
   }
 
   // B. "active window title and process" / "title and process"
-  if (/(?:title\s+and\s+process|process\s+and\s+title|title\s+and\s+pid|active\s+window.*and.*process)/i.test(normalized)) {
-    return [normalized];
+  if (/(?:title\s+and\s+process|process\s+and\s+title|title\s+and\s+pid|active\s+window.*and.*process)/i.test(normalizedForCheck)) {
+    return [normalizedForCheck];
   }
 
-  // Conjunction split regex: and, aur, then, phir, fir, uske baad
-  const conjunctionRegex = /\s+(?:and\s+then|and|aur|then|phir|fir|uske\s+baad)\s+/i;
+  // C. "search ... and add ... to ... playlist" / "find ... and add ... to ..." atomic workflow
+  if (/(?:search|find).+?\s+and\s+add\s+(?:it|the\s+\w+\s+video|\w+\s+video|video)\s+to/i.test(normalizedForCheck)) {
+    return [normalizedForCheck];
+  }
 
-  if (conjunctionRegex.test(normalized)) {
-    const parts = normalized
-      .split(conjunctionRegex)
-      .map((p) => p.trim())
-      .filter((p) => p.length > 0);
+  // Split on clause boundaries:
+  // e.g. ", and ", ", then ", ", ", " and ", " then ", " aur ", " phir ", " uske baad "
+  // Do not split inside digits (e.g. 10,000)
+  const clauseSplitRegex = /(?:,\s*(?:and\s+then|and|aur|then|phir|fir|uske\s+baad)\s*|,\s+|\s+(?:and\s+then|and|aur|then|phir|fir|uske\s+baad)\s+)/i;
+
+  if (clauseSplitRegex.test(rawClean)) {
+    const parts = rawClean
+      .split(clauseSplitRegex)
+      .map((p) => basicNormalize(p))
+      .filter((p) => p.length > 0 && p !== "luma" && p !== "hey luma");
 
     if (parts.length > 1) {
       return parts;
     }
   }
 
-  return [normalized];
+  return [basicNormalize(stripped)];
 }

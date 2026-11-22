@@ -11,6 +11,7 @@ export async function executeCompoundWorkflow(
 ): Promise<WorkflowResult> {
   const results: string[] = [];
   let contextualTarget: string | undefined = undefined;
+  let previousStepData: any = undefined;
 
   for (let i = 0; i < subCommands.length; i++) {
     const subCmd = subCommands[i];
@@ -25,8 +26,13 @@ export async function executeCompoundWorkflow(
       };
     }
 
+    // Pass previous step's data into arguments for data flow
+    if (previousStepData !== undefined) {
+      routed.arguments.previousData = previousStepData;
+    }
+
     // If this step targeted a specific website (e.g. amazon, youtube) or opened Chrome, propagate context
-    if (routed.intent.startsWith("YOUTUBE_") || routed.intent === "PLAY_FIRST_RESULT") {
+    if (routed.intent.startsWith("YOUTUBE_") || routed.intent === "PLAY_FIRST_RESULT" || routed.intent === "PLAY_VIDEO_RANK") {
       contextualTarget = "youtube";
     } else if (routed.intent === "OPEN_APP" && routed.arguments?.app === "chrome") {
       contextualTarget = "google";
@@ -41,6 +47,7 @@ export async function executeCompoundWorkflow(
       return res;
     }
 
+    previousStepData = res.data;
     results.push(res.message);
   }
 
@@ -48,5 +55,6 @@ export async function executeCompoundWorkflow(
   return {
     success: true,
     message: finalMsg,
+    data: previousStepData,
   };
 }

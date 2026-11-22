@@ -72,6 +72,41 @@ export class AgentExecutionLoop {
               break;
             }
 
+            case "create_tab": {
+              AgentStateManager.setCurrentAction("Opening a new tab in Chrome...");
+              const res = await BrowserAgent.create_tab(step.params?.url);
+              if (res.success) {
+                stepSuccess = true;
+                AgentStateManager.updateStep(step.step, {
+                  status: "success",
+                  resultMessage: res.message,
+                  durationMs: Date.now() - startTime,
+                });
+              } else {
+                throw new Error(res.message || "Failed to create new tab.");
+              }
+              break;
+            }
+
+            case "play_video": {
+              const rank = Number(step.params?.rank) || 1;
+              AgentStateManager.setCurrentAction(`Playing video #${rank}...`);
+              const res = await BrowserAgent.play_video_rank(rank);
+              if (res.success) {
+                stepSuccess = true;
+                targetProductTitle = res.title || "YouTube Video";
+                targetProductUrl = res.url || "";
+                AgentStateManager.updateStep(step.step, {
+                  status: "success",
+                  resultMessage: res.message,
+                  durationMs: Date.now() - startTime,
+                });
+              } else {
+                throw new Error(res.message || `Failed to play video #${rank}.`);
+              }
+              break;
+            }
+
             case "navigate": {
               const displayName = step.params?.displayName || "Website";
               const url = step.params?.url || "https://www.amazon.in";
@@ -92,8 +127,11 @@ export class AgentExecutionLoop {
             }
 
             case "search_input": {
-              const query = step.params?.query || "wireless keyboards";
-              const site = step.params?.site || "amazon";
+              const query = step.params?.query?.trim();
+              if (!query) {
+                throw new Error(`Step #${step.step} (${step.actionType}) failed: Missing required search query.`);
+              }
+              const site = step.params?.site || "google";
               AgentStateManager.setCurrentAction(`Entering search for "${query}" in ${site} search input...`);
 
               // Visibly locate search input, fill exact query, verify, and submit
@@ -109,8 +147,11 @@ export class AgentExecutionLoop {
             }
 
             case "wait_results": {
-              const query = step.params?.query || "wireless keyboards";
-              const site = step.params?.site || "amazon";
+              const query = step.params?.query?.trim();
+              if (!query) {
+                throw new Error(`Step #${step.step} (${step.actionType}) failed: Missing required search query.`);
+              }
+              const site = step.params?.site || "google";
               AgentStateManager.setCurrentAction(`Waiting for ${site} search results page to load...`);
               await BrowserAgent.wait_for_page(1000);
               await BrowserAgent.verify_search_results(query, site);
@@ -125,8 +166,11 @@ export class AgentExecutionLoop {
             }
 
             case "open_first_result": {
-              const query = step.params?.query || "wireless keyboards";
-              const site = step.params?.site || "amazon";
+              const query = step.params?.query?.trim();
+              if (!query) {
+                throw new Error(`Step #${step.step} (${step.actionType}) failed: Missing required search query.`);
+              }
+              const site = step.params?.site || "google";
               const domain = site === "amazon" ? "amazon.in" : site;
               AgentStateManager.setCurrentAction(`Identifying first product for "${query}" on ${site}...`);
 
@@ -159,11 +203,11 @@ export class AgentExecutionLoop {
             }
 
             case "extract_price": {
-              const query = step.params?.query || "wireless keyboards";
+              const query = step.params?.query?.trim() || "";
               const site = step.params?.site || "amazon";
               AgentStateManager.setCurrentAction(`Extracting active product price from ${site}...`);
 
-              if (!targetProductUrl) {
+              if (!targetProductUrl && query) {
                 targetProductUrl = site === "flipkart"
                   ? `https://www.flipkart.com/search?q=${encodeURIComponent(query)}`
                   : `https://www.amazon.in/s?k=${encodeURIComponent(query)}`;
